@@ -1,0 +1,2 @@
+#!/bin/sh
+printf 'AFPLAY %s\n' "$*" >> "$MOCK_DIR/events.log"

@@ -1,0 +1,37 @@
+name: Bypass
+description: A way around GrindGuard. Welcome, and public on purpose.
+labels: [bypass]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Bypasses are not security issues: GrindGuard runs with your own rights on your own machine. Every known one goes into [docs/BYPASS-MATRIX.md](../blob/main/docs/BYPASS-MATRIX.md). Please check there first.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      multiple: true
+      options: [macOS, Windows]
+    validations:
+      required: true
+  - type: textarea
+    id: how
+    attributes:
+      label: How does it work?
+      description: As concrete as possible – browser, address, app, command.
+    validations:
+      required: true
+  - type: dropdown
+    id: effort
+    attributes:
+      label: How easy is it in a weak moment?
+      options:
+        - Reflex – a few seconds, no planning
+        - Takes a minute and a deliberate decision
+        - Needs admin rights, a terminal or technical knowledge
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Idea for a fix (optional)

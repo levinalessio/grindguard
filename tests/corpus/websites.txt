@@ -1,0 +1,21 @@
+# Testkatalog-Regeln (fest, unabhängig von der mitgelieferten Vorlage)
+youtube.com
+instagram.com
+x.com
+reddit.com
+tiktok.com
+netflix.com
+twitch.tv
+my-site.com
+example.org/shorts
+example.org/watch/live
+google.com/search*udm=7*
+google.com/search*udm=2*
+*mp3*/*
+*.bet/*
+*casino*/*
+suche: mp3
+suche: meme
+suche: lustige videos
++music.youtube.com
++example.org/shorts/erlaubt

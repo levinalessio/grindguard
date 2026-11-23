@@ -1,0 +1,40 @@
+name: Bug
+description: Something does not work as described.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! Logs can show which sites you visited – read them before pasting and cut what you do not want to share.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [macOS, Windows]
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: GrindGuard version (`grind status`), OS version, browser
+      placeholder: GrindGuard 1.3 · macOS 27.2.1 · Safari 27
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: Steps to reproduce, if you have them. For website rules, the output of `grind check <address>` helps most.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `grind doctor`
+      render: text
+  - type: textarea
+    id: log
+    attributes:
+      label: Relevant lines from state/grindguard.log (optional)
+      render: text

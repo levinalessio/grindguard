@@ -1,0 +1,47 @@
+# GrindGuard – Einstellungen
+# Zeilen mit # sind Kommentare. Änderungen wirken nach etwa 15 Sekunden von selbst.
+
+# Wie lange der Bildschirm bei einer Warnung gesperrt bleibt (in Sekunden).
+# Erster Ausrutscher des Tages = SPERRZEIT_START, jeder weitere + SPERRZEIT_PLUS,
+# aber nie länger als SPERRZEIT_MAX (Obergrenze: 300).
+SPERRZEIT_START=10
+SPERRZEIT_PLUS=5
+SPERRZEIT_MAX=60
+
+# Warnung laut vorlesen (1 = ja, 0 = nein). Braucht eine deutsche Stimme,
+# siehe "grind doctor".
+STIMME=1
+
+# Welche Stimme? Leer = automatisch eine deutsche Stimme.
+# Alle Stimmen anzeigen:  ~\GrindGuard\grind stimmen
+STIMMEN_NAME=
+
+# Alarmton vor der Stimme (1 = ja, 0 = nein)
+ALARMTON=1
+
+# Wann der Wächter scharf ist. Standard: immer.
+# Beispiel "nur werktags tagsüber":  AKTIVE_ZEIT=08:00-18:00  und  AKTIVE_TAGE=12345
+AKTIVE_ZEIT=00:00-24:00
+# 1 = Montag … 7 = Sonntag
+AKTIVE_TAGE=1234567
+
+# Wie oft geprüft wird (in Sekunden). 1 = praktisch sofort.
+INTERVALL=1
+
+# Ton der Warnung: brutal (harte Ansage), direkt (sachlich) oder ruhig
+# (freundlich, ohne Sprüche aus sprueche.txt).
+TON=brutal
+
+# Nach der Sperre automatisch zurück zur letzten erlaubten App (1 = ja, 0 = nein)
+ZURUECK=1
+
+# Jagd-Erkennung: drei Ausrutscher innerhalb von 10 Minuten = sofort die
+# maximale Sperrzeit (1 = ja, 0 = nein)
+JAGD=1
+
+# Reagiert ein gesperrtes Programm nicht aufs normale Beenden, wird es hart
+# beendet (1 = ja, 0 = nein – dann bleibt es offen und du bekommst die Warnung)
+HART_BEENDEN=1
+
+# Lautstärke des Alarmtons, 0 bis 100
+LAUTSTAERKE=100

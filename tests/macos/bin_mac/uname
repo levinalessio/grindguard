@@ -1,0 +1,6 @@
+#!/bin/sh
+case $1 in
+    -s) echo Darwin ;;
+    -m) echo arm64 ;;
+    *)  /usr/bin/uname "$@" ;;
+esac

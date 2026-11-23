@@ -1,0 +1,16 @@
+#!/bin/sh
+# Mock von xattr: die Quarantäne einer Datei ist eine Datei "<pfad>.qtn" daneben.
+case $1 in
+    -d)
+        [ -f "$MOCK_DIR/xattr_broken" ] && exit 1
+        [ "$2" = com.apple.quarantine ] || exit 1
+        [ -f "$3.qtn" ] || exit 1
+        rm -f "$3.qtn"
+        exit 0 ;;
+    -p)
+        [ "$2" = com.apple.quarantine ] || exit 1
+        [ -f "$3.qtn" ] || exit 1
+        cat "$3.qtn"
+        exit 0 ;;
+esac
+exit 0

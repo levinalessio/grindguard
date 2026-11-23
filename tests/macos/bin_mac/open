@@ -1,0 +1,2 @@
+#!/bin/sh
+printf 'OPEN %s\n' "$*" >> "$MOCK_DIR/events.log"

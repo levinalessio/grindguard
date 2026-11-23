@@ -1,0 +1,75 @@
+#!/bin/sh
+# Mock von osascript fuer die Tests (Zustand liegt in $MOCK_DIR)
+all="$*"
+printf '%s\n' "$all" | tr '\n' ' ' >> "$MOCK_DIR/osascript.log"
+printf '\n' >> "$MOCK_DIR/osascript.log"
+last=""
+for a in "$@"; do last=$a; done
+
+case $all in
+    *"-l JavaScript"*overlay.js*)
+        # osascript -l JavaScript <overlay.js> <sekunden> <textdatei> <arch>
+        text=$(tr '\n' '|' < "$5")
+        printf 'OVERLAY secs=%s arch=%s text=[%s]\n' "$4" "$6" "$text" >> "$MOCK_DIR/events.log"
+        sleep "$(cat "$MOCK_DIR/overlay_sleep" 2>/dev/null || echo 1)"
+        exit "$(cat "$MOCK_DIR/overlay_rc" 2>/dev/null || echo 0)"
+        ;;
+    *"-l JavaScript"*frontmostApplication*)
+        [ -f "$MOCK_DIR/jxa_front" ] || exit 1
+        cat "$MOCK_DIR/jxa_front"
+        exit 0
+        ;;
+    *"info for (path to frontmost application)"*)
+        [ -f "$MOCK_DIR/as_front" ] || exit 1
+        cat "$MOCK_DIR/as_front"
+        exit 0
+        ;;
+    *"return URL of"*)
+        if [ -f "$MOCK_DIR/url_error" ]; then
+            cat "$MOCK_DIR/url_error" >&2
+            exit 1
+        fi
+        cat "$MOCK_DIR/url" 2>/dev/null
+        exit 0
+        ;;
+    *"close t"*)
+        mode=$(cat "$MOCK_DIR/close_mode" 2>/dev/null || echo closed)
+        case $mode in
+            error)
+                echo "execution error: boom (-1)" >&2
+                exit 1
+                ;;
+            closed)
+                cur=$(cat "$MOCK_DIR/url" 2>/dev/null)
+                if [ "$cur" = "$last" ]; then
+                    printf 'CLOSETAB %s\n' "$last" >> "$MOCK_DIR/events.log"
+                    if [ -f "$MOCK_DIR/url_next" ]; then
+                        cat "$MOCK_DIR/url_next" > "$MOCK_DIR/url"
+                    else
+                        : > "$MOCK_DIR/url"
+                    fi
+                    echo closed
+                else
+                    echo changed
+                fi
+                ;;
+            *)
+                echo "$mode"
+                ;;
+        esac
+        exit 0
+        ;;
+    *"display dialog"*)
+        printf 'DIALOG secs=%s head=[%s]\n' "$(printf '%s' "$all" | sed 's/.*end run \([0-9]*\) .*/\1/')" "$last" >> "$MOCK_DIR/events.log"
+        exit 0
+        ;;
+    *"display notification"*)
+        printf 'NOTIFY %s\n' "$last" >> "$MOCK_DIR/events.log"
+        exit 0
+        ;;
+    *quit*)
+        printf 'QUIT %s\n' "$all" >> "$MOCK_DIR/events.log"
+        exit 0
+        ;;
+esac
+exit 0

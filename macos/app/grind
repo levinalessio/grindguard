@@ -1,0 +1,2001 @@
+#!/bin/bash
+# shellcheck disable=SC2016   # awk-Programme stehen absichtlich in einfachen Anführungszeichen
+# ============================================================================
+#  GrindGuard – Fokus-Wächter für macOS
+#
+#  Erkennt Ablenkungen (Apps und Websites), schliesst sie sofort und zeigt
+#  eine Vollbild-Warnung. Nutzt nur macOS-Bordmittel: Es wird nichts
+#  nachinstalliert und nichts verlässt deinen Mac.
+#
+#  Alle Befehle:  ~/GrindGuard/grind help
+# ============================================================================
+
+VERSION="1.3"
+LABEL="com.grindguard.agent"
+
+# (Die beiden GRIND_TEST_-Variablen braucht nur der automatische Testlauf.)
+PATH="${GRIND_TEST_BIN:+$GRIND_TEST_BIN:}/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH
+LC_ALL="${GRIND_TEST_LOCALE:-en_US.UTF-8}"      # damit Umlaute korrekt ankommen
+export LC_ALL
+
+BASE=$(cd "$(dirname "$0")" 2>/dev/null && pwd) || exit 1
+CONF_DIR="$BASE/config"
+STATE_DIR="$BASE/state"
+LIB_DIR="$BASE/lib"
+CONF_SRC=""
+set_conf_src() {        # $1 = Ordner, aus dem die vier Listen gelesen werden
+    CONF_SRC=$1
+    SETTINGS="$1/einstellungen.txt"
+    SITES_FILE="$1/websites.txt"
+    APPS_FILE="$1/apps.txt"
+    QUOTES_FILE="$1/sprueche.txt"
+}
+set_conf_src "$CONF_DIR"
+STRIKES="$STATE_DIR/ausrutscher.log"
+PAUSE_FILE="$STATE_DIR/pause_bis"
+PIDFILE="$STATE_DIR/daemon.pid"
+LOG="$STATE_DIR/grindguard.log"
+WARN_TXT="$STATE_DIR/warnung.txt"
+STATUS_FILE="$STATE_DIR/status.txt"
+FOCUS_FILE="$STATE_DIR/fokus_bis"
+FOCUS_DIR="$STATE_DIR/fokus"
+NOT_SATZ="Ich breche meine Fokus-Sitzung bewusst ab"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+
+# Diese Programme werden nie geschlossen, egal was in apps.txt steht –
+# unter anderem das Terminal, damit du den Wächter immer anhalten kannst.
+PROTECTED="com.apple.finder com.apple.loginwindow com.apple.dock com.apple.systemuiserver com.apple.controlcenter com.apple.notificationcenterui com.apple.spotlight com.apple.systempreferences com.apple.terminal com.googlecode.iterm2 com.apple.securityagent com.apple.screensaver.engine com.apple.activitymonitor"
+
+# ----------------------------------------------------------------------------
+# Kleine Helfer
+# ----------------------------------------------------------------------------
+log() {
+    printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG" 2>/dev/null
+}
+
+die() {
+    printf '%s\n' "$*" >&2
+    exit 1
+}
+
+lower() {       # nur A–Z wird klein geschrieben; überall dieselbe Regel
+    printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]'
+}
+
+trim() {        # Ergebnis in REPLY
+    REPLY=$1
+    REPLY=${REPLY#"${REPLY%%[![:space:]]*}"}
+    REPLY=${REPLY%"${REPLY##*[![:space:]]}"}
+}
+
+is_int() {
+    case $1 in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    return 0
+}
+
+is_small_int() {        # 0 bis 9999, ohne führende Null (sonst rechnet die Shell oktal)
+    case $1 in
+        ''|*[!0-9]*|?????*|0?*) return 1 ;;
+    esac
+    return 0
+}
+
+valid_bid() {   # sieht das wie eine Bundle-ID aus (com.firma.app)?
+    case $1 in
+        ''|*[![:alnum:]._-]*) return 1 ;;
+        *.*) return 0 ;;
+    esac
+    return 1
+}
+
+clock() {       # Sekunden seit 1970 -> HH:MM (macOS-date, sonst GNU-date)
+    date -r "$1" '+%H:%M' 2>/dev/null || date -d "@$1" '+%H:%M' 2>/dev/null
+}
+
+day_ago() {     # $1 = Tage zurück, $2 = Format
+    date -v-"$1"d "$2" 2>/dev/null || date -d "$1 days ago" "$2" 2>/dev/null
+}
+
+notify() {      # $1 = Titel, $2 = Text (kleine Mitteilung oben rechts)
+    osascript -e 'on run argv' \
+        -e 'display notification (item 2 of argv) with title (item 1 of argv)' \
+        -e 'end run' "$1" "$2" >/dev/null 2>&1 &
+}
+
+# ----------------------------------------------------------------------------
+# Konfiguration einlesen
+# ----------------------------------------------------------------------------
+load_settings() {
+    local cfg line key val a b
+    SPERRZEIT_START=10
+    SPERRZEIT_PLUS=5
+    SPERRZEIT_MAX=60
+    STIMME=1
+    STIMMEN_NAME=""
+    ALARMTON=1
+    INTERVALL=1
+    ZEIT_VON=0000
+    ZEIT_BIS=2400
+    AKTIVE_TAGE=1234567
+    TON=brutal
+    ZURUECK=1
+    JAGD=1
+    HART_BEENDEN=1
+    LAUTSTAERKE=100
+    if [ -f "$SETTINGS" ]; then
+        cfg=$(LC_ALL=C tr -d '\r' < "$SETTINGS" 2>/dev/null)
+        while IFS= read -r line; do
+            trim "$line"; line=$REPLY
+            case $line in
+                ''|'#'*) continue ;;
+                *=*) ;;
+                *) continue ;;
+            esac
+            key=${line%%=*}
+            val=${line#*=}
+            val=${val%%#*}
+            trim "$key"; key=$REPLY
+            trim "$val"; val=$REPLY
+            case $key in
+                SPERRZEIT_START) is_small_int "$val" && SPERRZEIT_START=$val ;;
+                SPERRZEIT_PLUS)  is_small_int "$val" && SPERRZEIT_PLUS=$val ;;
+                SPERRZEIT_MAX)   is_small_int "$val" && SPERRZEIT_MAX=$val ;;
+                STIMME)
+                    case $val in
+                        0|1) STIMME=$val ;;
+                    esac ;;
+                ALARMTON)
+                    case $val in
+                        0|1) ALARMTON=$val ;;
+                    esac ;;
+                STIMMEN_NAME)    STIMMEN_NAME=$val ;;
+                TON)
+                    case $val in
+                        brutal|direkt|ruhig) TON=$val ;;
+                    esac ;;
+                ZURUECK)
+                    case $val in
+                        0|1) ZURUECK=$val ;;
+                    esac ;;
+                JAGD)
+                    case $val in
+                        0|1) JAGD=$val ;;
+                    esac ;;
+                HART_BEENDEN)
+                    case $val in
+                        0|1) HART_BEENDEN=$val ;;
+                    esac ;;
+                LAUTSTAERKE)
+                    is_small_int "$val" && [ "$val" -le 100 ] && LAUTSTAERKE=$val ;;
+                INTERVALL)
+                    case $val in
+                        0.5|[1-9]|[12][0-9]|30) INTERVALL=$val ;;
+                    esac ;;
+                AKTIVE_TAGE)
+                    case $val in
+                        ''|*[!1-7]*) ;;
+                        *) AKTIVE_TAGE=$val ;;
+                    esac ;;
+                AKTIVE_ZEIT)
+                    case $val in
+                        [0-2][0-9]:[0-5][0-9]-[0-2][0-9]:[0-5][0-9])
+                            a=${val%%-*}
+                            b=${val##*-}
+                            ZEIT_VON=${a%%:*}${a##*:}
+                            ZEIT_BIS=${b%%:*}${b##*:} ;;
+                    esac ;;
+            esac
+        done <<EOF
+$cfg
+EOF
+    fi
+    # Sicherheitsgrenzen: Der Bildschirm wird nie länger als 5 Minuten gesperrt.
+    [ "$SPERRZEIT_MAX" -gt 300 ] && SPERRZEIT_MAX=300
+    [ "$SPERRZEIT_MAX" -lt 3 ] && SPERRZEIT_MAX=3
+    [ "$SPERRZEIT_START" -lt 3 ] && SPERRZEIT_START=3
+    [ "$SPERRZEIT_START" -gt "$SPERRZEIT_MAX" ] && SPERRZEIT_START=$SPERRZEIT_MAX
+    [ "$SPERRZEIT_PLUS" -gt 300 ] && SPERRZEIT_PLUS=300
+    return 0
+}
+
+load_sites() {
+    local all
+    SITES_BLOCK=""
+    SITES_ALLOW=""
+    SEARCH_BLOCK=""
+    [ -f "$SITES_FILE" ] || return 0
+    all=$(LC_ALL=C tr -d '\r' < "$SITES_FILE" 2>/dev/null | LC_ALL=C tr '[:upper:]' '[:lower:]' |
+        LC_ALL=C sed -E -e 's/#.*$//' -e 's/^[[:space:]]+//' -e 's/[[:space:]]+$//' \
+               -e 's/^[+][[:space:]]+/+/' \
+               -e 's|^([+]?)https?://|\1|' -e 's|^([+]?)www[.]|\1|' -e 's|/+$||' |
+        LC_ALL=C grep -v '^$')
+    SITES_ALLOW=$(printf '%s\n' "$all" | LC_ALL=C sed -n 's/^[+]//p')
+    SEARCH_BLOCK=$(printf '%s\n' "$all" | LC_ALL=C sed -n 's/^suche:[[:space:]]*//p' | LC_ALL=C grep -v '^$')
+    SITES_BLOCK=$(printf '%s\n' "$all" | LC_ALL=C grep -v -e '^[+]' -e '^suche:')
+    return 0
+}
+
+load_apps() {
+    APPS_BLOCK=""
+    [ -f "$APPS_FILE" ] || return 0
+    APPS_BLOCK=$(LC_ALL=C tr -d '\r' < "$APPS_FILE" 2>/dev/null | LC_ALL=C tr '[:upper:]' '[:lower:]' |
+        LC_ALL=C sed -E -e 's/#.*$//' -e 's/^[[:space:]]+//' -e 's/[[:space:]]+$//' -e 's/[.]app$//' |
+        LC_ALL=C grep -v '^$')
+    return 0
+}
+
+load_all() {
+    local old
+    old=$STIMMEN_NAME
+    load_settings
+    load_sites
+    load_apps
+    if [ "$old" != "$STIMMEN_NAME" ] || [ -z "${VOICE_PICKED:-}" ]; then
+        pick_voice
+    fi
+}
+
+count_lines() { # Anzahl nicht-leerer Zeilen in $1
+    if [ -z "$1" ]; then
+        echo 0
+    else
+        printf '%s\n' "$1" | LC_ALL=C grep -c .
+    fi
+}
+
+# ----------------------------------------------------------------------------
+# Websites prüfen
+# ----------------------------------------------------------------------------
+parse_url() {   # $1 = URL; setzt U_HOST und U_PATH; 1 = keine normale Webadresse
+    local u rest hp tail h
+    U_HOST=""
+    U_PATH="/"
+    u=$(lower "$1")
+    case $u in
+        http://*|https://*) ;;
+        *) return 1 ;;
+    esac
+    rest=${u#*://}
+    hp=${rest%%[/?#]*}
+    tail=${rest#"$hp"}
+    h=${hp##*@}
+    h=${h%%:*}
+    h=${h#www.}
+    h=${h%.}
+    case $h in
+        *?.translate.goog)
+            # Umweg über Google Übersetzer: audio-com.translate.goog ist audio.com
+            h=$(printf '%s' "${h%.translate.goog}" | LC_ALL=C sed -e 's/--/_/g' -e 's/-/./g' -e 's/_/-/g')
+            h=${h#www.} ;;
+    esac
+    [ -n "$h" ] || return 1
+    U_HOST=$h
+    case $tail in
+        '') U_PATH="/" ;;
+        /*) U_PATH=$tail ;;
+        *)  U_PATH="/$tail" ;;
+    esac
+    norm_path
+    return 0
+}
+
+# Pfad vereinheitlichen, damit Umwege wie //shorts oder /%73horts nicht durchrutschen:
+# mehrfache / werden zu einem, %XX wird nur für unkritische Zeichen (a-z 0-9 - . _ ~)
+# entschlüsselt. Alles ab ? oder # bleibt unverändert.
+AWK_PATH='
+BEGIN { for (i = 0; i < 256; i++) hx[sprintf("%02x", i)] = i }
+{
+    s = $0; out = ""
+    while ((p = index(s, "%")) > 0) {
+        h = tolower(substr(s, p + 1, 2)); c = -1
+        if (length(h) == 2 && (h in hx)) c = hx[h]
+        if ((c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 45 || c == 46 || c == 95 || c == 126) {
+            out = out substr(s, 1, p - 1) tolower(sprintf("%c", c))
+            s = substr(s, p + 3)
+        } else {
+            out = out substr(s, 1, p)
+            s = substr(s, p + 1)
+        }
+    }
+    s = out s
+    gsub(/\/\/+/, "/", s)
+    printf "%s", s
+}'
+
+norm_path() {
+    local p rest
+    p=${U_PATH%%[?#]*}
+    rest=${U_PATH#"$p"}
+    case $p in
+        *//*|*%*) ;;
+        *) return 0 ;;
+    esac
+    p=$(printf '%s' "$p" | LC_ALL=C awk "$AWK_PATH")
+    [ -n "$p" ] || p=/
+    U_PATH="$p$rest"
+}
+
+site_match() {  # $1 = Liste (ein Eintrag pro Zeile); 0 = U_HOST/U_PATH passt
+    local e eh ep m ifs
+    [ -n "$1" ] || return 1
+    m=1
+    ifs=$IFS
+    IFS='
+'
+    set -f
+    for e in $1; do
+        case $e in
+            *"*"*)                      # Eintrag mit Stern: Muster über die ganze Adresse
+                # shellcheck disable=SC2254   # $e ist absichtlich ein Muster
+                case "$U_HOST$U_PATH" in
+                    $e) m=0; break ;;
+                esac
+                continue ;;
+        esac
+        eh=${e%%/*}
+        [ -n "$eh" ] || continue
+        case $U_HOST in
+            "$eh"|*."$eh") ;;
+            *) continue ;;
+        esac
+        case $e in
+            */*)
+                ep="/${e#*/}"
+                case $U_PATH in
+                    "$ep"*) m=0; break ;;
+                esac ;;
+            *)
+                m=0
+                break ;;
+        esac
+    done
+    set +f
+    IFS=$ifs
+    return $m
+}
+
+# Parameter, in denen Suchmaschinen den Suchtext übergeben
+# (Google, Bing, DuckDuckGo: q · Yahoo: p · Startpage: query · Yandex: text ·
+#  Baidu: wd · YouTube: search_query · viele Websites: search, s)
+SEARCH_PARAMS="q p query text wd search_query search s"
+
+# Suchtext entschlüsseln: + wird Leerzeichen, %XX wird das Zeichen, A–Z wird klein.
+AWK_QUERY='
+BEGIN { for (i = 1; i < 256; i++) hx[sprintf("%02x", i)] = i }
+{
+    s = $0; gsub(/[+]/, " ", s); out = ""
+    while ((p = index(s, "%")) > 0) {
+        h = tolower(substr(s, p + 1, 2))
+        if (length(h) == 2 && (h in hx)) {
+            out = out substr(s, 1, p - 1) sprintf("%c", hx[h])
+            s = substr(s, p + 3)
+        } else {
+            out = out substr(s, 1, p)
+            s = substr(s, p + 1)
+        }
+    }
+    printf "%s", tolower(out s)
+}'
+
+kw_in() {      # $1 = entschlüsselter Suchtext; 0 + S_HIT, wenn ein Suchbegriff drinsteckt
+    local k ifs hit
+    hit=1
+    ifs=$IFS
+    IFS='
+'
+    set -f
+    for k in $SEARCH_BLOCK; do
+        case $1 in
+            *"$k"*)
+                S_HIT=$k
+                hit=0
+                break ;;
+        esac
+    done
+    set +f
+    IFS=$ifs
+    return $hit
+}
+
+search_hit() {   # 0 = ein Suchbegriff aus der Liste steckt in der Suche; setzt S_HIT
+    local qs v name
+    S_HIT=""
+    [ -n "$SEARCH_BLOCK" ] || return 1
+    case $U_PATH in
+        *[?]*) qs=${U_PATH#*[?]} ;;
+        *) return 1 ;;
+    esac
+    qs="&${qs%%#*}"
+    for name in $SEARCH_PARAMS; do
+        case $qs in
+            *"&$name="*) ;;
+            *) continue ;;
+        esac
+        v=${qs#*&"$name"=}
+        v=${v%%&*}
+        [ -n "$v" ] || continue
+        case $v in
+            *[%+]*) v=$(printf '%s' "$v" | LC_ALL=C awk "$AWK_QUERY") ;;
+        esac
+        kw_in "$v" && return 0
+    done
+    return 1
+}
+
+site_blocked() {        # 0 = blockieren; setzt B_NAME (für Warnung und Statistik)
+    B_NAME=""
+    [ -n "$U_HOST" ] || return 1
+    site_match "$SITES_ALLOW" && return 1
+    # Suchbegriffe zuerst: dann nennt die Warnung „Suche nach mp3“ statt nur google.com
+    if search_hit; then
+        # shellcheck disable=SC1111   # deutsche Anführungszeichen, gehören zum Text
+        B_NAME="Suche nach „$S_HIT“"
+        return 0
+    fi
+    if site_match "$SITES_BLOCK"; then
+        B_NAME=$U_HOST
+        return 0
+    fi
+    return 1
+}
+
+# ----------------------------------------------------------------------------
+# Welche App ist gerade vorne?
+# Ergebnis: FRONT_KEY (eindeutig pro laufender App), FRONT_BID, FRONT_NAME
+# ----------------------------------------------------------------------------
+# Liest einen Wert aus "lsappinfo info -only KEY APP". Nur Zeilen der Form KEY=WERT zählen:
+# macOS 27 schreibt zusätzlich eine Kopfzeile wie  "Terminal" ASN:0x0-0x1:  (in front)
+# und nennt Schlüssel teils anders (CFBundleIdentifier / bundleID, LSDisplayName / name).
+ls_value() {    # $1 = Schlüssel, $2 = App-Angabe
+    lsappinfo info -only "$1" "$2" 2>/dev/null | awk -v want="$1" '
+        BEGIN {
+            w = tolower(want)
+            if (w == "bundleid") keys = "|cfbundleidentifier|bundleid|"
+            else if (w == "name") keys = "|lsdisplayname|displayname|name|"
+            else keys = "|" w "|"
+        }
+        {
+            i = index($0, "=")
+            if (i == 0) next
+            k = substr($0, 1, i - 1)
+            gsub(/^[ \t"]+|[ \t"]+$/, "", k)
+            if (index(keys, "|" tolower(k) "|") == 0) next
+            v = substr($0, i + 1)
+            gsub(/^[ \t"]+|[ \t"]+$/, "", v)
+            print v
+            exit
+        }'
+}
+
+ls_probe() {    # $1 = App-Angabe; füllt P_BID / P_NAME; 0 = brauchbar
+    P_BID=$(ls_value bundleid "$1")
+    if ! valid_bid "$P_BID"; then
+        P_BID=$(ls_value bundleID "$1")         # andere Schreibweise des Schlüssels
+        valid_bid "$P_BID" || P_BID=""
+    fi
+    P_NAME=$(ls_value name "$1")
+    case $P_NAME in
+        '['*) P_NAME="" ;;
+    esac
+    [ -n "$P_BID$P_NAME" ]
+}
+
+# Methode 1: lsappinfo – schnell und ohne jede Berechtigung
+front_lsappinfo() {
+    local asn spec
+    asn=$(lsappinfo front 2>/dev/null) || return 1
+    trim "$asn"; asn=$REPLY
+    case $asn in
+        ASN:*) ;;
+        *) return 1 ;;
+    esac
+    if [ "$asn" = "$LS_ASN" ] && [ -n "$FRONT_KEY" ]; then
+        return 0                        # dieselbe App wie beim letzten Mal
+    fi
+    spec=$asn
+    if ! ls_probe "$spec"; then
+        # Manche macOS-Versionen geben die Nummer ohne das zweite "0x" aus.
+        spec=$(printf '%s' "$asn" | sed 's/-/-0x/')
+        ls_probe "$spec" || return 1
+    fi
+    LS_ASN=$asn
+    LS_SPEC=$spec
+    FRONT_KEY=$asn
+    FRONT_BID=$P_BID
+    FRONT_NAME=${P_NAME:-$P_BID}
+    FRONT_PID=""
+    return 0
+}
+
+# Methode 2: AppleScript (falls lsappinfo auf deinem macOS nicht mitspielt)
+front_as() {
+    local out bid name
+    out=$(osascript \
+        -e 'set i to info for (path to frontmost application)' \
+        -e 'set b to ""' \
+        -e 'try' \
+        -e 'set b to (bundle identifier of i) as text' \
+        -e 'end try' \
+        -e 'return b & "|" & ((name of i) as text)' 2>/dev/null) || return 1
+    case $out in
+        *"|"*) ;;
+        *) return 1 ;;
+    esac
+    bid=${out%%|*}
+    name=${out#*|}
+    name=${name%.app}
+    valid_bid "$bid" || bid=""
+    [ -n "$bid$name" ] || return 1
+    LS_SPEC=""
+    FRONT_BID=$bid
+    FRONT_NAME=${name:-$bid}
+    FRONT_PID=""
+    FRONT_KEY="as:$bid:$name"
+    return 0
+}
+
+# Methode 3: JavaScript for Automation
+JXA_FRONT='ObjC.import("AppKit"); var a = $.NSWorkspace.sharedWorkspace.frontmostApplication; var b = ObjC.unwrap(a.bundleIdentifier) || ""; var n = ObjC.unwrap(a.localizedName) || ""; b + "|" + a.processIdentifier + "|" + n;'
+
+front_jxa() {
+    local out bid rest pid name
+    out=$(osascript -l JavaScript -e "$JXA_FRONT" 2>/dev/null) || return 1
+    case $out in
+        *"|"*"|"*) ;;
+        *) return 1 ;;
+    esac
+    bid=${out%%|*}
+    rest=${out#*|}
+    pid=${rest%%|*}
+    name=${rest#*|}
+    valid_bid "$bid" || bid=""
+    [ -n "$bid$name" ] || return 1
+    is_int "$pid" || pid=""
+    LS_SPEC=""
+    FRONT_BID=$bid
+    FRONT_NAME=${name:-$bid}
+    FRONT_PID=$pid
+    FRONT_KEY="jxa:$bid:$pid"
+    return 0
+}
+
+pick_front_method() {
+    FRONT_METHOD=""
+    LS_ASN=""
+    FRONT_KEY=""
+    if front_lsappinfo; then
+        FRONT_METHOD=lsappinfo
+    elif front_as; then
+        FRONT_METHOD=applescript
+    elif front_jxa; then
+        FRONT_METHOD=jxa
+    fi
+    [ -n "$FRONT_METHOD" ]
+}
+
+get_front() {
+    case $FRONT_METHOD in
+        lsappinfo)   front_lsappinfo ;;
+        applescript) front_as ;;
+        jxa)         front_jxa ;;
+        *)           pick_front_method ;;
+    esac
+}
+
+front_pid() {   # füllt FRONT_PID, wenn möglich
+    if is_int "$FRONT_PID"; then
+        return 0
+    fi
+    FRONT_PID=""
+    if [ -n "$LS_SPEC" ]; then
+        FRONT_PID=$(ls_value pid "$LS_SPEC")
+    elif valid_bid "$FRONT_BID"; then
+        FRONT_PID=$(ls_value pid "$FRONT_BID")
+    fi
+    if is_int "$FRONT_PID"; then
+        return 0
+    fi
+    FRONT_PID=""
+    return 1
+}
+
+browser_kind() {    # setzt BK anhand von BID_LC: safari | chromium | firefox | leer
+    case $BID_LC in
+        com.apple.safari|com.apple.safaritechnologypreview|com.kagi.kagimacos*)
+            BK=safari ;;
+        com.google.chrome|com.google.chrome.*|org.chromium.chromium|com.brave.browser|com.brave.browser.*|com.microsoft.edgemac|com.microsoft.edgemac.*|company.thebrowser.browser|company.thebrowser.dia|com.vivaldi.vivaldi|com.operasoftware.opera|com.operasoftware.operagx|com.operasoftware.operanext|ai.perplexity.comet|com.openai.atlas|net.imput.helium)
+            BK=chromium ;;
+        org.mozilla.firefox|org.mozilla.firefoxdeveloperedition|org.mozilla.nightly|app.zen-browser.zen|io.gitlab.librewolf-community|net.waterfox.waterfox|net.mullvad.mullvadbrowser|org.torproject.torbrowser)
+            BK=firefox ;;
+        *)
+            BK="" ;;
+    esac
+}
+
+app_listed() {  # steht die vordere App in apps.txt? (Name oder Bundle-ID)
+    local hay
+    [ -n "$APPS_BLOCK" ] || return 1
+    hay="
+$APPS_BLOCK
+"
+    if [ -n "$BID_LC" ]; then
+        case $hay in
+            *"
+$BID_LC
+"*) return 0 ;;
+        esac
+    fi
+    if [ -n "$NAME_LC" ]; then
+        case $hay in
+            *"
+$NAME_LC
+"*) return 0 ;;
+        esac
+    fi
+    return 1
+}
+
+is_protected() {
+    [ -n "$BID_LC" ] || return 1
+    case " $PROTECTED " in
+        *" $BID_LC "*) return 0 ;;
+    esac
+    return 1
+}
+
+# ----------------------------------------------------------------------------
+# Browser: Adresse des sichtbaren Tabs lesen / Tab schliessen
+# (macOS fragt beim ersten Mal einmal pro Browser um Erlaubnis.)
+# ----------------------------------------------------------------------------
+tab_word() {    # setzt TAB_WORD passend zum Browser
+    case $BK in
+        safari)   TAB_WORD="current tab" ;;
+        chromium) TAB_WORD="active tab" ;;
+        *)        TAB_WORD=""; return 1 ;;
+    esac
+    valid_bid "$FRONT_BID"
+}
+
+browser_url() { # gibt die Adresse aus; Fehlertext + Status 1 bei Problemen
+    tab_word || return 1
+    osascript \
+        -e "tell application id \"$FRONT_BID\"" \
+        -e 'with timeout of 3 seconds' \
+        -e 'if (count of windows) is 0 then return ""' \
+        -e "return URL of $TAB_WORD of front window" \
+        -e 'end timeout' \
+        -e 'end tell' 2>&1
+}
+
+close_tab() {   # $1 = Adresse, die geschlossen werden soll; setzt CLOSE_RESULT
+    CLOSE_RESULT=error
+    tab_word || return 0
+    # Der Tab wird nur geschlossen, wenn er immer noch genau diese Adresse zeigt.
+    CLOSE_RESULT=$(osascript \
+        -e 'on run argv' \
+        -e 'set expected to item 1 of argv' \
+        -e "tell application id \"$FRONT_BID\"" \
+        -e 'with timeout of 3 seconds' \
+        -e 'if (count of windows) is 0 then return "none"' \
+        -e "set t to $TAB_WORD of front window" \
+        -e 'if (URL of t) is expected then' \
+        -e 'close t' \
+        -e 'return "closed"' \
+        -e 'end if' \
+        -e 'return "changed"' \
+        -e 'end timeout' \
+        -e 'end tell' \
+        -e 'end run' "$1" 2>/dev/null) || CLOSE_RESULT=error
+    case $CLOSE_RESULT in
+        closed|changed|none) ;;
+        *) CLOSE_RESULT=error ;;
+    esac
+    return 0
+}
+
+close_app() {   # beendet die vordere App; setzt CLOSED=1 bei Erfolg
+    local i comm
+    CLOSED=0
+    if front_pid && [ "$FRONT_PID" -gt 1 ]; then
+        # Wer ist der Prozess? Vor einem harten Beenden wird das noch einmal verglichen,
+        # damit nie ein anderer Prozess mit wiederverwendeter Nummer getroffen wird.
+        comm=$(ps -p "$FRONT_PID" -o comm= 2>/dev/null)
+        kill "$FRONT_PID" 2>/dev/null
+        i=0
+        while [ "$i" -lt 10 ]; do
+            if ! kill -0 "$FRONT_PID" 2>/dev/null; then
+                CLOSED=1
+                return 0
+            fi
+            sleep 0.2
+            i=$((i + 1))
+        done
+        if [ "$HART_BEENDEN" = 1 ] && [ -n "$comm" ] &&
+            [ "$(ps -p "$FRONT_PID" -o comm= 2>/dev/null)" = "$comm" ]; then
+            kill -9 "$FRONT_PID" 2>/dev/null
+            sleep 0.3
+        fi
+        kill -0 "$FRONT_PID" 2>/dev/null || CLOSED=1
+        return 0
+    fi
+    # Ohne Prozessnummer: die App per AppleScript beenden.
+    if valid_bid "$FRONT_BID"; then
+        if osascript -e "tell application id \"$FRONT_BID\"" \
+            -e 'with timeout of 5 seconds' -e 'quit' -e 'end timeout' \
+            -e 'end tell' >/dev/null 2>&1; then
+            CLOSED=1
+        fi
+    fi
+    return 0
+}
+
+# ----------------------------------------------------------------------------
+# Warnung: Vollbild + Stimme
+# ----------------------------------------------------------------------------
+# Liest die Ausgabe von "say -v ?" (Name, Sprache, # Beispielsatz) und sucht
+# eine deutsche Stimme: am liebsten Anna, sonst eine ohne Klammerzusatz.
+AWK_VOICE='
+{
+    line = $0
+    sub(/[ \t]*#.*$/, "", line)
+    n = split(line, a, /[ \t]+/)
+    loc = a[n]
+    name = line
+    sub(/[ \t]+[^ \t]+$/, "", name)
+    if (loc ~ /^de[_-]/) {
+        if (anna == "" && name ~ /^Anna/) anna = name
+        if (plain == "" && index(name, "(") == 0) plain = name
+        if (first == "") first = name
+    }
+}
+END {
+    if (anna != "") print anna
+    else if (plain != "") print plain
+    else if (first != "") print first
+}'
+
+ALARM_SOUND=/System/Library/Sounds/Sosumi.aiff
+
+volume_arg() {  # LAUTSTAERKE 0–100 -> afplay-Wert 0.00–1
+    if [ "$LAUTSTAERKE" -ge 100 ]; then
+        printf '1'
+    else
+        printf '0.%02d' "$LAUTSTAERKE"
+    fi
+}
+
+pick_voice() {
+    VOICE_PICKED=1
+    VOICE=$STIMMEN_NAME
+    [ -n "$VOICE" ] && return 0
+    # Automatisch eine deutsche Stimme suchen (am liebsten "Anna").
+    VOICE=$(say -v '?' 2>/dev/null | awk "$AWK_VOICE")
+    return 0
+}
+
+speak() {       # $1 = Text; läuft im Hintergrund
+    if [ "$ALARMTON" != 1 ] && [ "$STIMME" != 1 ]; then
+        return 0
+    fi
+    (
+        if [ "$ALARMTON" = 1 ] && [ "$LAUTSTAERKE" -gt 0 ]; then
+            afplay -v "$(volume_arg)" "$ALARM_SOUND" >/dev/null 2>&1
+        fi
+        if [ "$STIMME" = 1 ]; then
+            if [ -n "$VOICE" ]; then
+                say -v "$VOICE" "$1" >/dev/null 2>&1 || say "$1" >/dev/null 2>&1
+            else
+                say "$1" >/dev/null 2>&1
+            fi
+        fi
+    ) &
+    return 0
+}
+
+fallback_dialog() {     # $1 = Sekunden, $2 = Überschrift, $3 = Spruch, $4 = Detail
+    osascript -e 'on run argv' \
+        -e 'set secs to (item 1 of argv) as integer' \
+        -e 'try' \
+        -e 'tell current application to activate' \
+        -e 'end try' \
+        -e 'display dialog ((item 3 of argv) & return & return & (item 4 of argv)) with title ("GrindGuard: " & (item 2 of argv)) buttons {item 5 of argv} default button 1 with icon stop giving up after secs' \
+        -e 'end run' "$1" "$2" "$3" "$4" "Zurück an die Arbeit" >/dev/null 2>&1
+}
+
+show_warning() {        # $1 = Sekunden, $2 = Überschrift, $3 = Spruch, $4 = Detail, $5 = gesprochene Überschrift
+                        # $6 = Zähler-Zeile (z. B. AUSRUTSCHER 03 · 20 S), $7 = was geschlossen wurde
+    local opid waited limit rc
+    WARN_MODE=dialog
+    printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$2" "$3" "$4" "${6:-}" "${7:-}" "$TON" > "$WARN_TXT" 2>/dev/null
+    speak "${5:-$2} $3"
+    if [ -f "$LIB_DIR/overlay.js" ]; then
+        osascript -l JavaScript "$LIB_DIR/overlay.js" "$1" "$WARN_TXT" "$ARCH" >/dev/null 2>>"$LOG" &
+        opid=$!
+        OVERLAY_PID=$opid
+        # Sicherheitsnetz: Die Sperre endet spätestens 5 Sekunden nach Ablauf.
+        waited=0
+        limit=$(($1 + 5))
+        while kill -0 "$opid" 2>/dev/null; do
+            sleep 1
+            waited=$((waited + 1))
+            if [ "$waited" -ge "$limit" ]; then
+                kill -9 "$opid" 2>/dev/null
+                break
+            fi
+        done
+        wait "$opid" 2>/dev/null
+        rc=$?
+        OVERLAY_PID=""
+        if [ "$rc" -eq 0 ] || [ "$waited" -ge 3 ]; then
+            WARN_MODE=vollbild
+            return 0
+        fi
+        log "FEHLER: Vollbild-Warnung konnte nicht angezeigt werden (Status $rc) – nehme das Dialogfenster."
+    fi
+    fallback_dialog "$1" "$2" "$3" "$4"
+    return 0
+}
+
+AWK_QUOTE='
+/^[ \t]*(#|$)/ { next }
+{ a[n++] = $0 }
+END { if (n > 0) print a[(c - 1 + d) % n] }'
+
+CALM_QUOTES="Kurz durchatmen. Dann den nächsten kleinen Schritt.
+Abgelenkt passiert jedem. Entscheidend ist, wie schnell du zurück bist.
+Was ist die nächste Aufgabe, die du in fünf Minuten schaffst?
+Leg das Handy weg, trink einen Schluck Wasser, mach weiter."
+
+pick_quote() {  # $1 = Nr. heute; geht reihum durch sprueche.txt, jeden Tag mit anderem Start
+    local q doy
+    q=""
+    doy=$(date +%j)
+    if [ "$TON" = ruhig ]; then
+        q=$(printf '%s\n' "$CALM_QUOTES" | LC_ALL=C awk -v c="$1" -v d="$doy" "$AWK_QUOTE")
+    elif [ -f "$QUOTES_FILE" ]; then
+        q=$(LC_ALL=C tr -d '\r' < "$QUOTES_FILE" 2>/dev/null | LC_ALL=C awk -v c="$1" -v d="$doy" "$AWK_QUOTE")
+    fi
+    [ -n "$q" ] || q="Zurück an die Arbeit. Jetzt."
+    printf '%s' "$q"
+}
+
+warn_texts() {  # $1 = Nr. heute, $2 = Name, $3 = 1 wenn geschlossen, $4 = Umwege in 10 Min. (Jagd)
+                # setzt W_HEAD / W_SPEAK / W_DETAIL
+    local what
+    if [ "$3" = 1 ]; then
+        what="$2 wurde geschlossen."
+    else
+        what="$2 ist noch offen. Schliess es. Jetzt."
+    fi
+    if [ "${4:-0}" -ge 3 ]; then
+        W_HEAD="JAGD ERKANNT."
+        W_SPEAK="Jagd erkannt."
+        W_DETAIL="$what Das ist der $4. Umweg in zehn Minuten. Die Sperre steht jetzt auf dem Maximum."
+        if [ "$TON" = ruhig ]; then
+            W_HEAD="DU SUCHST GERADE EINEN UMWEG."
+            W_SPEAK="Du suchst gerade einen Umweg."
+            W_DETAIL="$what Das war der $4. Versuch in zehn Minuten. Steh kurz auf, dann zurück an die Aufgabe."
+        fi
+        return 0
+    fi
+    case $TON in
+        ruhig)
+            W_HEAD="KURZ ZURÜCK."
+            W_SPEAK="Kurz zurück."
+            W_DETAIL="$what Kein Drama. Zurück zur Aufgabe." ;;
+        direkt)
+            W_HEAD="ABLENKUNG GESPERRT."
+            W_SPEAK="Ablenkung gesperrt."
+            W_DETAIL="$what Ausrutscher Nr. $1 heute." ;;
+        *)
+            case $1 in
+                1)
+                    W_HEAD="STOPP."
+                    W_SPEAK="Stopp."
+                    W_DETAIL="$what Erster Ausrutscher heute – sorg dafür, dass es der letzte bleibt." ;;
+                2)
+                    W_HEAD="SCHON WIEDER."
+                    W_SPEAK="Schon wieder."
+                    W_DETAIL="$what Zweiter Ausrutscher heute." ;;
+                3|4)
+                    W_HEAD="NR. $1 HEUTE."
+                    W_SPEAK="Ausrutscher Nummer $1 heute."
+                    W_DETAIL="$what Das wird gerade zur Gewohnheit." ;;
+                *)
+                    W_HEAD="NR. $1 HEUTE."
+                    W_SPEAK="Ausrutscher Nummer $1 heute."
+                    W_DETAIL="$what Das ist kein Ausrutscher mehr. Das ist ein Muster – und nur du kannst es brechen." ;;
+            esac ;;
+    esac
+}
+
+count_today() { # Ausrutscher heute
+    local n day
+    n=0
+    if [ -f "$STRIKES" ]; then
+        day=$(date '+%Y-%m-%d')
+        n=$(grep -c "^$day" "$STRIKES" 2>/dev/null)
+    fi
+    is_int "$n" || n=0
+    printf '%s' "$n"
+}
+
+lock_seconds() {        # $1 = Nr. des Ausrutschers heute
+    local s
+    s=$((SPERRZEIT_START + SPERRZEIT_PLUS * ($1 - 1)))
+    [ "$s" -gt "$SPERRZEIT_MAX" ] && s=$SPERRZEIT_MAX
+    printf '%s' "$s"
+}
+
+recent_hunt() { # zählt Ausrutscher der letzten 10 Minuten (inkl. jetzt); setzt HUNT
+    local t keep
+    keep=""
+    HUNT=0
+    for t in $RECENT_STRIKES "$NOW"; do
+        is_int "$t" || continue
+        [ $((NOW - t)) -lt 600 ] || continue
+        keep="$keep $t"
+        HUNT=$((HUNT + 1))
+    done
+    RECENT_STRIKES=$keep
+}
+
+punish() {      # $1 = web|app, $2 = Name, $3 = 1 wenn geschlossen
+    local name ts n secs quote hunt label
+    name=$(printf '%s' "$2" | LC_ALL=C tr -d '|\r\n')
+    ts=$(date '+%Y-%m-%d %H:%M:%S')
+    printf '%s|%s|%s\n' "$ts" "$1" "$name" >> "$STRIKES"
+    n=$(count_today)
+    [ "$n" -ge 1 ] || n=1
+    secs=$(lock_seconds "$n")
+    recent_hunt
+    hunt=0
+    if [ "$JAGD" = 1 ] && [ "$HUNT" -ge 3 ]; then
+        hunt=$HUNT
+        secs=$SPERRZEIT_MAX
+    fi
+    warn_texts "$n" "$name" "$3" "$hunt"
+    quote=$(pick_quote "$n")
+    label=$(printf 'AUSRUTSCHER %02d · %s S' "$n" "$secs")
+    [ "$hunt" -gt 0 ] && label="$label · JAGD"
+    if [ "$hunt" -gt 0 ]; then
+        log "Ausrutscher Nr. $n heute: $name – Jagd erkannt ($hunt in 10 Minuten), Bildschirm $secs s gesperrt"
+    else
+        log "Ausrutscher Nr. $n heute: $name – Bildschirm $secs s gesperrt"
+    fi
+    show_warning "$secs" "$W_HEAD" "$quote" "$W_DETAIL" "$W_SPEAK" "$label" "$name"
+    go_back
+}
+
+go_back() {     # nach der Sperre zur letzten erlaubten App zurück
+    local pid
+    [ "$ZURUECK" = 1 ] || return 0
+    valid_bid "$LAST_GOOD_BID" || return 0
+    [ "$LAST_GOOD_BID" = "$ENF_BID" ] && return 0      # dieselbe App (z. B. der Browser) bleibt vorne
+    pid=$(ls_value pid "$LAST_GOOD_BID")
+    is_int "$pid" || return 0                         # läuft nicht mehr: nichts neu starten
+    open -b "$LAST_GOOD_BID" >/dev/null 2>&1 &
+    log "Zurück zu ${LAST_GOOD_NAME:-$LAST_GOOD_BID}"
+}
+
+enforce() {     # $1 = web|app, $2 = Anzeigename, $3 = Adresse (nur web)
+    local target
+    target="$1:$2"
+    ENFORCED=1
+    if [ "$target" = "$COOL_TARGET" ] && [ "$NOW" -lt "$COOL_UNTIL" ]; then
+        return 0
+    fi
+    ENF_BID=$FRONT_BID
+    CLOSED=0
+    if [ "$1" = web ]; then
+        close_tab "$3"
+        case $CLOSE_RESULT in
+            closed) CLOSED=1 ;;
+            changed|none) return 0 ;;   # der Tab wurde inzwischen gewechselt
+        esac
+    else
+        close_app
+    fi
+    if [ "$CLOSED" = 1 ]; then
+        FAILS=0
+        FAIL_TARGET=""
+    else
+        if [ "$target" = "$FAIL_TARGET" ]; then
+            FAILS=$((FAILS + 1))
+        else
+            FAIL_TARGET=$target
+            FAILS=1
+        fi
+        if [ "$FAILS" -ge 3 ]; then
+            # Schutz vor einer Endlosschleife aus Warnungen, falls das
+            # Schliessen technisch nicht klappt (z. B. fehlende Erlaubnis).
+            COOL_TARGET=$target
+            COOL_UNTIL=$((NOW + 300))
+            FAILS=0
+            FAIL_TARGET=""
+            log "FEHLER: $2 liess sich dreimal nicht schliessen – 5 Minuten Ruhe für dieses Ziel. Prüfen: grind doctor"
+            write_status
+            notify "GrindGuard" "$2 liess sich nicht schliessen. Im Terminal prüfen: ~/GrindGuard/grind doctor"
+            return 0
+        fi
+    fi
+    punish "$1" "$2" "$CLOSED"
+}
+
+perm_problem() {        # fehlende Erlaubnis höchstens alle 10 Minuten melden
+    case " $DENIED_BROWSERS " in
+        *" $FRONT_BID "*) ;;
+        *)
+            DENIED_BROWSERS="$DENIED_BROWSERS $FRONT_BID"
+            write_status ;;
+    esac
+    if [ $((NOW - PERM_WARNED)) -ge 600 ]; then
+        PERM_WARNED=$NOW
+        log "KEINE ERLAUBNIS: macOS lässt GrindGuard $FRONT_NAME nicht steuern. Systemeinstellungen > Datenschutz & Sicherheit > Automation."
+        notify "GrindGuard braucht eine Erlaubnis" "Systemeinstellungen > Datenschutz & Sicherheit > Automation: Zugriff auf $FRONT_NAME einschalten."
+    fi
+}
+
+check_web() {
+    local url
+    if ! url=$(browser_url); then
+        case $url in
+            *-1743*|*"ot authorized"*) perm_problem ;;
+        esac
+        return 0
+    fi
+    case " $OK_BROWSERS " in
+        *" $FRONT_BID "*) ;;
+        *)
+            OK_BROWSERS="$OK_BROWSERS $FRONT_BID"
+            OK_NAMES="${OK_NAMES:+$OK_NAMES, }$FRONT_NAME"
+            DENIED_BROWSERS=$(printf '%s' " $DENIED_BROWSERS " | sed "s| $FRONT_BID | |g")
+            log "Browser-Zugriff ok: $FRONT_NAME"
+            write_status ;;
+    esac
+    [ -n "$url" ] || return 0
+    [ "$url" = "$LAST_URL_OK" ] && return 0
+    if parse_url "$url" && site_blocked; then
+        LAST_URL_OK=""
+        enforce web "$B_NAME" "$url"
+    else
+        LAST_URL_OK=$url
+    fi
+    return 0
+}
+
+# ----------------------------------------------------------------------------
+# Zustand für "status" und "doctor" (schreibt nur der Wächter)
+# ----------------------------------------------------------------------------
+write_status() {
+    {
+        printf 'pid=%s\n' "$$"
+        printf 'herzschlag=%s\n' "$NOW"
+        printf 'methode=%s\n' "$FRONT_METHOD"
+        printf 'browser_ok=%s\n' "$OK_NAMES"
+        printf 'browser_ohne_erlaubnis=%s\n' "$DENIED_BROWSERS"
+        if [ "$NOW" -lt "${COOL_UNTIL:-0}" ]; then
+            printf 'ausgesetzt=%s\n' "${COOL_TARGET#*:}"
+            printf 'ausgesetzt_bis=%s\n' "$COOL_UNTIL"
+        fi
+        printf 'fokus_bis=%s\n' "$FOCUS_END"
+    } > "$STATUS_FILE" 2>/dev/null
+}
+
+status_value() {        # $1 = Schlüssel aus status.txt
+    [ -f "$STATUS_FILE" ] || return 0
+    sed -n "s/^$1=//p" "$STATUS_FILE" 2>/dev/null | head -n 1
+}
+
+# ----------------------------------------------------------------------------
+# Fokus-Sitzung: Regeln eingefroren, pause/stop/uninstall gesperrt
+# ----------------------------------------------------------------------------
+focus_end_file() {      # gibt das Ende der Sitzung aus (Sekunden seit 1970), sonst nichts
+    local f
+    f=""
+    [ -f "$FOCUS_FILE" ] || return 1
+    read -r f < "$FOCUS_FILE" 2>/dev/null
+    is_int "$f" || return 1
+    printf '%s' "$f"
+}
+
+focus_active() {        # im Wächter: setzt FOCUS_END, 0 = Sitzung läuft
+    local f
+    FOCUS_END=""
+    [ -f "$FOCUS_FILE" ] || return 1
+    f=""
+    read -r f < "$FOCUS_FILE" 2>/dev/null
+    is_int "$f" || return 1
+    [ "$NOW" -lt "$f" ] || return 1
+    FOCUS_END=$f
+    return 0
+}
+
+focus_guard() {         # $1 = Befehl; bricht ab, solange eine Fokus-Sitzung läuft
+    local f now
+    f=$(focus_end_file) || return 0
+    now=$(date +%s)
+    [ "$now" -lt "$f" ] || return 0
+    die "Fokus-Sitzung läuft bis $(clock "$f") Uhr – \"$1\" ist bis dahin gesperrt.
+Notausstieg (10 Minuten Wartezeit): $BASE/grind notausstieg"
+}
+
+# ----------------------------------------------------------------------------
+# Pause und aktive Zeiten
+# ----------------------------------------------------------------------------
+pause_end() {   # gibt das Pausenende (Sekunden seit 1970) aus, sonst nichts
+    local p
+    p=""
+    [ -f "$PAUSE_FILE" ] || return 1
+    read -r p < "$PAUSE_FILE" 2>/dev/null
+    is_int "$p" || return 1
+    printf '%s' "$p"
+}
+
+is_paused() {
+    local p
+    [ -f "$PAUSE_FILE" ] || return 1
+    p=$(pause_end)
+    if [ -n "$p" ] && [ "$NOW" -lt "$p" ]; then
+        return 0
+    fi
+    rm -f "$PAUSE_FILE"
+    if [ -n "$p" ]; then
+        log "Pause vorbei"
+        notify "GrindGuard" "Pause vorbei. Zurück an die Arbeit."
+    fi
+    return 1
+}
+
+in_days() {     # $1 = Wochentag 1–7; steht er in AKTIVE_TAGE?
+    case $AKTIVE_TAGE in
+        *"$1"*) return 0 ;;
+    esac
+    return 1
+}
+
+is_active_time() {
+    local d
+    if [ "$ZEIT_VON" = "$ZEIT_BIS" ] || { [ "$ZEIT_VON" = 0000 ] && [ "$ZEIT_BIS" = 2400 ]; }; then
+        in_days "$DOW"
+        return
+    fi
+    # Die vorangestellte 1 verhindert, dass 0830 als Oktalzahl gelesen wird.
+    if [ "1$ZEIT_VON" -lt "1$ZEIT_BIS" ]; then
+        [ "1$HM" -ge "1$ZEIT_VON" ] && [ "1$HM" -lt "1$ZEIT_BIS" ] && in_days "$DOW"
+        return
+    fi
+    # Zeitfenster über Mitternacht (z. B. 22:00-02:00)
+    if [ "1$HM" -ge "1$ZEIT_VON" ]; then
+        in_days "$DOW"
+        return
+    fi
+    if [ "1$HM" -lt "1$ZEIT_BIS" ]; then
+        # gehört zum Abend davor: Mo 22:00 bis Di 02:00 ist eine Montags-Sitzung
+        d=$((DOW - 1))
+        [ "$d" -lt 1 ] && d=7
+        in_days "$d"
+        return
+    fi
+    return 1
+}
+
+# ----------------------------------------------------------------------------
+# Der Wächter selbst (läuft im Hintergrund)
+# ----------------------------------------------------------------------------
+daemon_pid() {  # 0 + DPID, wenn der Wächter läuft
+    DPID=""
+    [ -f "$PIDFILE" ] || return 1
+    read -r DPID < "$PIDFILE" 2>/dev/null
+    if ! is_int "$DPID"; then
+        DPID=""
+        return 1
+    fi
+    if ! kill -0 "$DPID" 2>/dev/null; then
+        DPID=""
+        return 1
+    fi
+    case $(ps -p "$DPID" -o command= 2>/dev/null) in
+        *grind*run*) return 0 ;;
+    esac
+    DPID=""
+    return 1
+}
+
+daemon_cleanup() {      # beim Beenden: eigene PID-Datei und eine offene Warnung wegräumen
+    local p
+    p=""
+    if [ -f "$PIDFILE" ]; then
+        read -r p < "$PIDFILE" 2>/dev/null
+    fi
+    if [ "$p" = "$$" ]; then
+        rm -f "$PIDFILE"
+    fi
+    if [ -n "$OVERLAY_PID" ]; then
+        kill "$OVERLAY_PID" 2>/dev/null
+    fi
+}
+
+rotate_log() {  # Protokoll auf etwa 512 KB begrenzen (eine ältere Generation bleibt)
+    local sz
+    [ -f "$LOG" ] || return 0
+    sz=$(wc -c < "$LOG" 2>/dev/null | tr -d ' ')
+    is_int "$sz" || return 0
+    [ "$sz" -gt 524288 ] && mv -f "$LOG" "$LOG.alt"
+    return 0
+}
+
+# Diese Apps sind nie das Ziel der Rückkehr (Systemoberflächen, Sperrbildschirm)
+NO_RETURN="com.apple.loginwindow com.apple.dock com.apple.systemuiserver com.apple.controlcenter com.apple.notificationcenterui com.apple.spotlight com.apple.securityagent com.apple.screensaver.engine"
+
+remember_good() {       # die vordere App war erlaubt: Ziel für die Rückkehr merken
+    valid_bid "$FRONT_BID" || return 0
+    case " $NO_RETURN " in
+        *" $BID_LC "*) return 0 ;;
+    esac
+    LAST_GOOD_BID=$FRONT_BID
+    LAST_GOOD_NAME=$FRONT_NAME
+}
+
+daemon() {
+    local n
+    mkdir -p "$STATE_DIR" || exit 1
+    # Läuft schon ein Wächter? Bei einem Neustart kurz warten, bis der alte weg ist.
+    n=0
+    while daemon_pid && [ "$DPID" != "$$" ]; do
+        n=$((n + 1))
+        if [ "$n" -gt 10 ]; then
+            echo "GrindGuard läuft bereits (PID $DPID)."
+            sleep 30    # verhindert, dass der Autostart im Sekundentakt neu startet
+            exit 0
+        fi
+        sleep 0.5
+    done
+    OVERLAY_PID=""
+    printf '%s\n' "$$" > "$PIDFILE.$$" && mv -f "$PIDFILE.$$" "$PIDFILE"
+    trap 'daemon_cleanup' EXIT
+    trap 'exit 0' INT TERM HUP
+    rotate_log
+
+    LS_ASN=""; LS_SPEC=""; FRONT_KEY=""; FRONT_BID=""; FRONT_NAME=""; FRONT_PID=""
+    PREV_KEY=""; BK=""; BID_LC=""; NAME_LC=""; APP_BLOCKED=0
+    LAST_URL_OK=""; FAILS=0; FAIL_TARGET=""; COOL_TARGET=""; COOL_UNTIL=0
+    PERM_WARNED=0; FRONT_FAILS=0; LOOPS=0; FIREFOX_NOTED=0; OK_BROWSERS=""; OK_NAMES=""
+    DENIED_BROWSERS=""; RECENT_STRIKES=""; LAST_GOOD_BID=""; LAST_GOOD_NAME=""; ENF_BID=""
+    FOCUS_END=""; ENFORCED=0
+    STIMMEN_NAME=""; VOICE_PICKED=""; VOICE=""
+    ARCH=$(uname -m)
+    NOW=$(date +%s)
+    load_all
+    pick_front_method
+    log "GrindGuard $VERSION gestartet (App-Erkennung: ${FRONT_METHOD:-noch offen})"
+    write_status
+
+    while :; do
+        sleep "$INTERVALL" &
+        wait $!                         # so reagiert der Wächter sofort auf "stop"
+        LOOPS=$((LOOPS + 1))
+        if [ $((LOOPS % 15)) -eq 0 ]; then
+            load_all                    # Änderungen an den Listen übernehmen
+            PREV_KEY=""
+            LAST_URL_OK=""
+            rotate_log
+        fi
+        # shellcheck disable=SC2046   # Aufteilen in drei Werte ist gewollt
+        set -- $(date '+%s %H%M %u')
+        NOW=$1; HM=$2; DOW=$3
+        is_int "$NOW" || continue
+        [ $((LOOPS % 10)) -eq 0 ] && write_status
+
+        if focus_active; then
+            if [ "$CONF_SRC" != "$FOCUS_DIR" ] && [ -d "$FOCUS_DIR" ]; then
+                set_conf_src "$FOCUS_DIR"
+                load_all
+                PREV_KEY=""; LAST_URL_OK=""
+                log "Fokus-Sitzung läuft bis $(clock "$FOCUS_END") Uhr – Regeln eingefroren"
+                write_status
+            fi
+        else
+            if [ "$CONF_SRC" = "$FOCUS_DIR" ]; then
+                set_conf_src "$CONF_DIR"
+                load_all
+                PREV_KEY=""; LAST_URL_OK=""
+                rm -f "$FOCUS_FILE"
+                rm -rf "$FOCUS_DIR"
+                log "Fokus-Sitzung beendet"
+                notify "GrindGuard" "Fokus-Sitzung vorbei. Stark."
+                write_status
+            fi
+            is_paused && continue
+            is_active_time || continue
+        fi
+
+        if ! get_front; then
+            FRONT_FAILS=$((FRONT_FAILS + 1))
+            if [ "$FRONT_FAILS" -ge 20 ]; then
+                FRONT_FAILS=0
+                pick_front_method
+            fi
+            continue
+        fi
+        FRONT_FAILS=0
+
+        if [ "$FRONT_KEY" != "$PREV_KEY" ]; then        # App gewechselt
+            PREV_KEY=$FRONT_KEY
+            LAST_URL_OK=""
+            BID_LC=$(lower "$FRONT_BID")
+            NAME_LC=$(lower "$FRONT_NAME")
+            browser_kind
+            APP_BLOCKED=0
+            if app_listed && ! is_protected; then
+                APP_BLOCKED=1
+            fi
+            if [ "$BK" = firefox ] && [ "$FIREFOX_NOTED" = 0 ]; then
+                FIREFOX_NOTED=1
+                log "HINWEIS: $FRONT_NAME lässt sich nicht mitlesen – Websites dort werden nicht erkannt."
+            fi
+        fi
+
+        ENFORCED=0
+        if [ "$APP_BLOCKED" = 1 ]; then
+            enforce app "$FRONT_NAME" ""
+            PREV_KEY=""
+            LS_ASN=""
+            continue
+        fi
+        case $BK in
+            safari|chromium) check_web ;;
+        esac
+        [ "$ENFORCED" = 1 ] || remember_good
+    done
+}
+
+# ----------------------------------------------------------------------------
+# Autostart (LaunchAgent)
+# ----------------------------------------------------------------------------
+xml_escape() {
+    printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+}
+
+# macOS 27 startet keinen Dienst, dessen plist das Quarantäne-Attribut trägt
+# (Apple Release Notes, "Launch Daemons and Agents"). Ein aus dem Internet
+# geladenes Installationsskript kann dieses Attribut an Dateien weitergeben,
+# die es anlegt. Darum wird es hier gezielt entfernt.
+clear_quarantine() {
+    local f
+    for f in "$@"; do
+        [ -e "$f" ] || continue
+        xattr -d com.apple.quarantine "$f" >/dev/null 2>&1
+    done
+    return 0
+}
+
+has_quarantine() {
+    xattr -p com.apple.quarantine "$1" >/dev/null 2>&1
+}
+
+write_plist() {
+    local self out tmp
+    mkdir -p "$HOME/Library/LaunchAgents" "$STATE_DIR" || return 1
+    self=$(xml_escape "$BASE/grind")
+    out=$(xml_escape "$STATE_DIR/launchd.log")
+    # Neue Datei schreiben und dann verschieben: So erbt sie keine Attribute einer alten plist.
+    tmp="$PLIST.tmp.$$"
+    cat > "$tmp" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$LABEL</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>$self</string>
+        <string>run</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+    <key>StandardOutPath</key>
+    <string>$out</string>
+    <key>StandardErrorPath</key>
+    <string>$out</string>
+</dict>
+</plist>
+EOF
+    mv -f "$tmp" "$PLIST" || { rm -f "$tmp"; return 1; }
+    clear_quarantine "$PLIST" "$BASE/grind" "$LIB_DIR/overlay.js"
+}
+
+agent_unload() {
+    launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 ||
+        launchctl unload "$PLIST" >/dev/null 2>&1
+    return 0
+}
+
+wait_gone() {           # wartet bis zu $1 Sekunden, bis kein Wächter mehr läuft
+    local n max
+    n=0
+    max=$(($1 * 5))
+    while daemon_pid; do
+        if [ "$n" -ge "$max" ]; then
+            return 1
+        fi
+        sleep 0.2
+        n=$((n + 1))
+    done
+    return 0
+}
+
+stop_daemon() {         # beendet den Wächter sicher (Autostart-Dienst und Prozess)
+    agent_unload
+    if daemon_pid; then
+        kill "$DPID" 2>/dev/null
+    fi
+    if ! wait_gone 4; then
+        kill -9 "$DPID" 2>/dev/null
+        wait_gone 2
+    fi
+    rm -f "$PIDFILE"
+}
+
+agent_load() {
+    local uid n out
+    uid=$(id -u)
+    stop_daemon
+    clear_quarantine "$PLIST" "$BASE/grind" "$LIB_DIR/overlay.js"
+    launchctl enable "gui/$uid/$LABEL" >/dev/null 2>&1
+    BOOT_ERR=""
+    n=0
+    while [ "$n" -lt 5 ]; do
+        if out=$(launchctl bootstrap "gui/$uid" "$PLIST" 2>&1); then
+            BOOT_ERR=""
+            return 0
+        fi
+        BOOT_ERR=$(printf '%s' "$out" | tr '\n' ' ')
+        sleep 1
+        n=$((n + 1))
+    done
+    log "FEHLER: launchctl bootstrap: ${BOOT_ERR:-ohne Meldung}"
+    launchctl load -w "$PLIST" >/dev/null 2>&1      # ältere macOS-Versionen
+}
+
+launchd_state() {       # z. B. "state=running exit=0" aus launchctl print
+    launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null |
+        sed -n -e 's/^[[:space:]]*state = \(.*\)$/state=\1/p' -e 's/^[[:space:]]*last exit code = \(.*\)$/exit=\1/p' |
+        head -n 2 | tr '\n' ' ' | sed 's/ $//'
+}
+
+explain_launchd() {     # warum läuft der Dienst nicht? Ursachen im Klartext
+    local st
+    if has_quarantine "$PLIST"; then
+        echo "  Ursache: Die Autostart-Datei steht unter Quarantäne. macOS 27 startet sie dann nicht."
+        echo "  Beheben: xattr -d com.apple.quarantine \"$PLIST\" && $BASE/grind start"
+    fi
+    [ -n "${BOOT_ERR:-}" ] && echo "  launchctl meldet: $BOOT_ERR"
+    st=$(launchd_state)
+    [ -n "$st" ] && echo "  launchd: $st"
+    echo "  Prüfe auch: Systemeinstellungen > Allgemein > Anmeldeobjekte & Erweiterungen –"
+    echo "  dort muss unter 'Im Hintergrund erlauben' der Eintrag 'bash' eingeschaltet sein."
+    return 0
+}
+
+wait_for_daemon() {     # bis zu $1 Sekunden warten, bis der Wächter läuft
+    local n
+    n=0
+    while [ "$n" -lt "$1" ]; do
+        daemon_pid && return 0
+        sleep 1
+        n=$((n + 1))
+    done
+    daemon_pid
+}
+
+# ----------------------------------------------------------------------------
+# Befehle
+# ----------------------------------------------------------------------------
+cmd_start() {
+    [ "$(uname -s)" = Darwin ] || die "GrindGuard läuft nur auf macOS."
+    write_plist || die "Konnte den Autostart nicht einrichten ($PLIST)."
+    agent_load
+    if wait_for_daemon 8; then
+        echo "GrindGuard läuft (PID $DPID) und startet ab jetzt bei jeder Anmeldung automatisch."
+    else
+        echo "Der Wächter ist nicht gestartet."
+        explain_launchd
+        echo "Danach noch einmal: $BASE/grind start"
+        return 1
+    fi
+}
+
+agent_loaded() {        # kennt macOS den Autostart-Dienst gerade?
+    launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1
+}
+
+cmd_stop() {
+    focus_guard stop
+    stop_daemon
+    rm -f "$PAUSE_FILE"
+    if agent_loaded; then
+        echo "Achtung: macOS hat den Hintergrunddienst nicht freigegeben – er startet gleich wieder."
+        echo "Ganz abschalten: $BASE/grind uninstall"
+        return 1
+    fi
+    echo "GrindGuard ist angehalten. Er startet wieder bei der nächsten Anmeldung oder mit: $BASE/grind start"
+    echo "Dauerhaft entfernen: $BASE/grind uninstall"
+}
+
+cmd_uninstall() {
+    focus_guard uninstall
+    stop_daemon
+    rm -f "$PLIST" "$PAUSE_FILE"
+    echo "GrindGuard ist entfernt und startet nicht mehr automatisch."
+    echo "Der Ordner $BASE (deine Listen und die Statistik) liegt noch da –"
+    echo "wenn du ihn nicht mehr brauchst, zieh ihn in den Papierkorb."
+}
+
+cmd_status() {
+    local p n next now f hb cool
+    STIMMEN_NAME=""; VOICE_PICKED=1
+    load_all
+    printf 'GrindGuard %s\n' "$VERSION"
+    now=$(date +%s)
+    f=$(focus_end_file)
+    if daemon_pid; then
+        p=$(pause_end)
+        if [ -n "$f" ] && [ "$now" -lt "$f" ]; then
+            printf '  Wächter:        FOKUS-SITZUNG bis %s Uhr (Regeln eingefroren)\n' "$(clock "$f")"
+        elif [ -n "$p" ] && [ "$now" -lt "$p" ]; then
+            printf '  Wächter:        pausiert bis %s Uhr\n' "$(clock "$p")"
+        else
+            printf '  Wächter:        läuft (PID %s)\n' "$DPID"
+        fi
+        hb=$(status_value herzschlag)
+        if is_int "$hb" && [ $((now - hb)) -gt 60 ]; then
+            printf '  Achtung:        letztes Lebenszeichen vor %s Sekunden – hängt er?\n' "$((now - hb))"
+        fi
+        cool=$(status_value ausgesetzt_bis)
+        if is_int "$cool" && [ "$now" -lt "$cool" ]; then
+            printf '  Achtung:        Schutz für %s ausgesetzt bis %s Uhr (liess sich nicht schliessen)\n' "$(status_value ausgesetzt)" "$(clock "$cool")"
+        fi
+    else
+        printf '  Wächter:        läuft NICHT – starten mit: %s/grind start\n' "$BASE"
+    fi
+    n=$(count_today)
+    printf '  Heute:          %s Ausrutscher\n' "$n"
+    next=$((n + 1))
+    printf '  Nächste Sperre: %s Sekunden\n' "$(lock_seconds "$next")"
+    printf '  Blockiert:      %s Websites, %s Apps, %s Suchbegriffe\n' "$(count_lines "$SITES_BLOCK")" "$(count_lines "$APPS_BLOCK")" "$(count_lines "$SEARCH_BLOCK")"
+    if [ "$ZEIT_VON" != 0000 ] || [ "$ZEIT_BIS" != 2400 ] || [ "$AKTIVE_TAGE" != 1234567 ]; then
+        printf '  Aktiv:          %s–%s Uhr, Tage %s (1 = Montag)\n' "$ZEIT_VON" "$ZEIT_BIS" "$AKTIVE_TAGE"
+    else
+        printf '  Aktiv:          immer\n'
+    fi
+    if [ -f "$LOG" ] && grep -Eq 'KEINE ERLAUBNIS|FEHLER' "$LOG" 2>/dev/null; then
+        printf '\nLetzte Probleme (Details: %s/grind doctor):\n' "$BASE"
+        grep -E 'KEINE ERLAUBNIS|FEHLER' "$LOG" | tail -n 3 | sed 's/^/  /'
+    fi
+}
+
+cmd_pause() {
+    local min now end
+    min=${1:-15}
+    if ! is_small_int "$min" || [ "$min" -lt 1 ]; then
+        die "Bitte die Minuten als Zahl angeben, z. B.: grind pause 20"
+    fi
+    focus_guard pause
+    if [ "$min" -gt 120 ]; then
+        min=120
+        echo "Maximal 120 Minuten am Stück."
+    fi
+    mkdir -p "$STATE_DIR" || die "Kann $STATE_DIR nicht anlegen."
+    now=$(date +%s)
+    end=$((now + min * 60))
+    printf '%s\n' "$end" > "$PAUSE_FILE"
+    printf 'Pause: %s Minuten, bis %s Uhr. Danach ist der Wächter automatisch wieder scharf.\n' "$min" "$(clock "$end")"
+}
+
+cmd_resume() {
+    rm -f "$PAUSE_FILE"
+    echo "Pause beendet. Der Wächter ist wieder scharf."
+}
+
+cmd_test() {
+    local quote
+    mkdir -p "$STATE_DIR" || die "Kann $STATE_DIR nicht anlegen."
+    STIMMEN_NAME=""; VOICE_PICKED=""
+    load_all
+    ARCH=$(uname -m)
+    quote=$(pick_quote 1)
+    echo "Test: Gleich erscheint 6 Sekunden lang die Warnung …"
+    show_warning 6 "TESTALARM." "$quote" "So sieht es aus, wenn du erwischt wirst. Das hier ist nur ein Test." "Testalarm."
+    if [ "$WARN_MODE" = vollbild ]; then
+        echo "Vollbild-Warnung: funktioniert."
+    else
+        echo "Die Vollbild-Warnung liess sich nicht anzeigen – es wurde das einfache Dialogfenster verwendet."
+        echo "Details stehen in: $LOG"
+    fi
+}
+
+rule_lines() {   # wirksame Zeilen der Website-Liste: "Zeile<TAB>Eintrag" (wie load_sites vereinheitlicht)
+    [ -f "$SITES_FILE" ] || return 0
+    LC_ALL=C tr -d '\r' < "$SITES_FILE" 2>/dev/null | LC_ALL=C tr '[:upper:]' '[:lower:]' |
+        LC_ALL=C sed -E -e 's/#.*$//' -e 's/^[[:space:]]+//' -e 's/[[:space:]]+$//' \
+               -e 's/^[+][[:space:]]+/+/' \
+               -e 's|^([+]?)https?://|\1|' -e 's|^([+]?)www[.]|\1|' -e 's|/+$||' |
+        LC_ALL=C awk 'length($0) > 0 { printf "%d\t%s\n", NR, $0 }'
+}
+
+find_rule() {   # $1 = allow | search | block; setzt R_LINE und R_TEXT für die erste passende Zeile
+    local nr e k
+    R_LINE=""
+    R_TEXT=""
+    while IFS='	' read -r nr e; do
+        [ -n "$e" ] || continue
+        case $1 in
+            allow)
+                case $e in
+                    +*) site_match "${e#+}" || continue ;;
+                    *) continue ;;
+                esac ;;
+            search)
+                case $e in
+                    suche:*) k=${e#suche:}; trim "$k"; [ "$REPLY" = "$S_HIT" ] || continue ;;
+                    *) continue ;;
+                esac ;;
+            block)
+                case $e in
+                    +*|suche:*) continue ;;
+                esac
+                site_match "$e" || continue ;;
+        esac
+        R_LINE=$nr
+        R_TEXT=$e
+        return 0
+    done <<EOF
+$(rule_lines)
+EOF
+    return 1
+}
+
+cmd_check() {   # $1 = Adresse; zeigt, ob sie blockiert würde, und welche Regel greift
+    local u where f
+    [ -n "$1" ] || die "Aufruf: grind check youtube.com/shorts"
+    STIMMEN_NAME=""; VOICE_PICKED=1
+    f=$(focus_end_file) && [ "$(date +%s)" -lt "$f" ] && [ -d "$FOCUS_DIR" ] && set_conf_src "$FOCUS_DIR"
+    load_all
+    case $1 in
+        *://*) u=$1 ;;
+        *)     u="https://$1" ;;
+    esac
+    if ! parse_url "$u"; then
+        echo "Das ist keine Webadresse: $1"
+        return 1
+    fi
+    where="websites.txt"
+    [ "$CONF_SRC" = "$FOCUS_DIR" ] && where="eingefrorene Liste der Fokus-Sitzung"
+    if site_blocked; then
+        if [ -n "$S_HIT" ]; then
+            # shellcheck disable=SC1111
+            echo "BLOCKIERT  $U_HOST$U_PATH  (Suchbegriff „$S_HIT“)"
+            find_rule search && printf '  Regel:    %s  (%s, Zeile %s)\n' "$R_TEXT" "$where" "$R_LINE"
+        else
+            echo "BLOCKIERT  $U_HOST$U_PATH"
+            find_rule block && printf '  Regel:    %s  (%s, Zeile %s)\n' "$R_TEXT" "$where" "$R_LINE"
+        fi
+    else
+        echo "erlaubt    $U_HOST$U_PATH"
+        if find_rule allow; then
+            printf '  Ausnahme: %s  (%s, Zeile %s)\n' "$R_TEXT" "$where" "$R_LINE"
+        fi
+    fi
+}
+
+cmd_corpus() {  # für die automatischen Tests: eine Adresse pro Zeile -> "B <Suchbegriff|->" oder "E -"
+    local line
+    [ -f "$1" ] || die "Datei fehlt: $1"
+    STIMMEN_NAME=""; VOICE_PICKED=1
+    load_all
+    while IFS= read -r line || [ -n "$line" ]; do
+        line=$(printf '%s' "$line" | tr -d '\r')
+        case $line in
+            ''|'#'*) continue ;;
+        esac
+        case $line in
+            *://*) ;;
+            *) line="https://$line" ;;
+        esac
+        if parse_url "$line" && site_blocked; then
+            printf 'B %s\n' "${S_HIT:--}"
+        else
+            printf 'E -\n'
+        fi
+    done < "$1"
+}
+
+cmd_fokus() {   # $1 = Minuten (Standard 50, 5 bis 240)
+    local min now end cur f
+    min=${1:-50}
+    if ! is_small_int "$min" || [ "$min" -lt 5 ]; then
+        die "Bitte die Minuten als Zahl angeben (5 bis 240), z. B.: grind fokus 50"
+    fi
+    if [ "$min" -gt 240 ]; then
+        min=240
+        echo "Maximal 240 Minuten am Stück."
+    fi
+    mkdir -p "$STATE_DIR" || die "Kann $STATE_DIR nicht anlegen."
+    now=$(date +%s)
+    end=$((now + min * 60))
+    cur=$(focus_end_file)
+    if [ -n "$cur" ] && [ "$now" -lt "$cur" ]; then
+        if [ "$end" -le "$cur" ]; then
+            echo "Es läuft schon eine Fokus-Sitzung bis $(clock "$cur") Uhr. Verkürzen geht nicht."
+            return 0
+        fi
+        echo "Fokus-Sitzung verlängert."
+    else
+        rm -rf "$FOCUS_DIR"
+        mkdir -p "$FOCUS_DIR" || die "Kann $FOCUS_DIR nicht anlegen."
+        for f in einstellungen.txt websites.txt apps.txt sprueche.txt; do
+            [ -f "$CONF_DIR/$f" ] && cp "$CONF_DIR/$f" "$FOCUS_DIR/$f"
+        done
+    fi
+    printf '%s\n' "$end" > "$FOCUS_FILE"
+    rm -f "$PAUSE_FILE"
+    log "Fokus-Sitzung gestartet: $min Minuten, bis $(clock "$end") Uhr"
+    echo "Fokus-Sitzung: $min Minuten, bis $(clock "$end") Uhr."
+    echo "Deine Listen sind bis dahin eingefroren, pause, stop und uninstall sind gesperrt."
+    echo "Notausstieg (10 Minuten Wartezeit): $BASE/grind notausstieg"
+    if ! daemon_pid; then
+        echo "Achtung: Der Wächter läuft gerade nicht – starten mit: $BASE/grind start"
+    fi
+}
+
+cmd_notausstieg() {
+    local cur now line end
+    cur=$(focus_end_file)
+    now=$(date +%s)
+    if [ -z "$cur" ] || [ "$now" -ge "$cur" ]; then
+        echo "Es läuft keine Fokus-Sitzung."
+        return 0
+    fi
+    if [ ! -t 0 ] && [ -z "${GRIND_TEST_TTY:-}" ]; then
+        die "Der Notausstieg geht nur von Hand im Terminal."
+    fi
+    echo "Die Sitzung läuft noch bis $(clock "$cur") Uhr."
+    echo "Wenn du wirklich aussteigen willst, tippe genau diesen Satz ab und drück Enter:"
+    echo
+    echo "  $NOT_SATZ"
+    echo
+    line=""
+    IFS= read -r line
+    if [ "$line" != "$NOT_SATZ" ]; then
+        die "Nicht genau abgetippt. Die Sitzung läuft weiter."
+    fi
+    end=$((now + 600))
+    if [ "$end" -lt "$cur" ]; then
+        printf '%s\n' "$end" > "$FOCUS_FILE"
+    else
+        end=$cur
+    fi
+    log "Notausstieg: Fokus-Sitzung endet um $(clock "$end") Uhr"
+    echo "Okay. Die Sitzung endet um $(clock "$end") Uhr. Bis dahin gilt sie weiter."
+    echo "Nutze die zehn Minuten: Schreib auf, warum du aussteigst."
+}
+
+wd_name() {
+    case $1 in
+        1) printf 'Mo' ;; 2) printf 'Di' ;; 3) printf 'Mi' ;; 4) printf 'Do' ;;
+        5) printf 'Fr' ;; 6) printf 'Sa' ;; 7) printf 'So' ;; *) printf '  ' ;;
+    esac
+}
+
+cmd_stats() {
+    local i d day rest dow lab c bar k
+    if [ ! -s "$STRIKES" ]; then
+        echo "Noch kein einziger Ausrutscher aufgezeichnet."
+        return 0
+    fi
+    echo "Ausrutscher der letzten 7 Tage"
+    i=6
+    while [ "$i" -ge 0 ]; do
+        d=$(day_ago "$i" '+%Y-%m-%d|%u|%d.%m.')
+        day=${d%%|*}
+        rest=${d#*|}
+        dow=${rest%%|*}
+        lab=${rest#*|}
+        c=$(grep -c "^$day" "$STRIKES" 2>/dev/null)
+        is_int "$c" || c=0
+        bar=""
+        k=0
+        while [ "$k" -lt "$c" ] && [ "$k" -lt 40 ]; do
+            bar="$bar█"
+            k=$((k + 1))
+        done
+        printf '  %s %s  %2s  %s\n' "$(wd_name "$dow")" "$lab" "$c" "$bar"
+        i=$((i - 1))
+    done
+    echo
+    echo "Häufigste Ablenkungen (alle Tage)"
+    awk -F'|' 'NF >= 3 { c[$3]++ } END { for (k in c) printf "%d|%s\n", c[k], k }' "$STRIKES" |
+        sort -t'|' -k1,1nr | head -n 5 |
+        while IFS='|' read -r c k; do
+            printf '  %3s×  %s\n' "$c" "$k"
+        done
+}
+
+cmd_edit() {
+    echo "Öffne den Ordner mit deinen Listen: $CONF_DIR"
+    echo "  websites.txt        blockierte Websites"
+    echo "  apps.txt            blockierte Programme"
+    echo "  sprueche.txt        die Texte der Warnung"
+    echo "  einstellungen.txt   Sperrzeiten, Stimme, aktive Zeiten"
+    echo "Änderungen wirken nach etwa 15 Sekunden von selbst."
+    open "$CONF_DIR" 2>/dev/null || true
+}
+
+cmd_doctor() {
+    local ok f browsers denied st
+    ok=1
+    STIMMEN_NAME=""; VOICE_PICKED=""
+    load_all
+    printf 'GrindGuard %s – Selbsttest\n\n' "$VERSION"
+    printf 'macOS:               %s (%s)\n' "$(sw_vers -productVersion 2>/dev/null || echo unbekannt)" "$(uname -m)"
+
+    LS_ASN=""; LS_SPEC=""; FRONT_KEY=""; FRONT_BID=""; FRONT_NAME=""; FRONT_PID=""
+    if pick_front_method; then
+        printf 'App-Erkennung:       ok über %s – vorne ist gerade: %s (%s)\n' "$FRONT_METHOD" "$FRONT_NAME" "${FRONT_BID:-ohne Bundle-ID}"
+    else
+        printf 'App-Erkennung:       FEHLER – keine der drei Methoden liefert die vordere App.\n'
+        ok=0
+    fi
+
+    if [ -f "$LIB_DIR/overlay.js" ]; then
+        printf 'Vollbild-Warnung:    Datei vorhanden – ausprobieren mit: %s/grind test\n' "$BASE"
+    else
+        printf 'Vollbild-Warnung:    FEHLT (%s) – es wird nur ein Dialogfenster gezeigt.\n' "$LIB_DIR/overlay.js"
+        ok=0
+    fi
+
+    if [ -f "$PLIST" ]; then
+        if daemon_pid; then
+            printf 'Hintergrunddienst:   läuft (PID %s)\n' "$DPID"
+        else
+            printf 'Hintergrunddienst:   eingerichtet, läuft aber NICHT – starten mit: %s/grind start\n' "$BASE"
+            ok=0
+        fi
+        st=$(launchd_state)
+        [ -n "$st" ] && printf 'launchd:             %s\n' "$st"
+        if has_quarantine "$PLIST"; then
+            printf 'Autostart-Datei:     FEHLER – steht unter Quarantäne, macOS 27 startet sie nicht.\n'
+            printf '                     Beheben: %s/grind start  (entfernt das Attribut)\n' "$BASE"
+            ok=0
+        fi
+    else
+        printf 'Hintergrunddienst:   nicht eingerichtet – starten mit: %s/grind start\n' "$BASE"
+        ok=0
+    fi
+    f=$(focus_end_file)
+    if [ -n "$f" ] && [ "$(date +%s)" -lt "$f" ]; then
+        printf 'Fokus-Sitzung:       läuft bis %s Uhr (Regeln eingefroren)\n' "$(clock "$f")"
+    fi
+    printf 'Ton der Warnung:     %s\n' "$TON"
+    if [ "$ALARMTON" = 1 ] && [ ! -f "$ALARM_SOUND" ]; then
+        printf 'Alarmton:            Datei fehlt (%s) – es bleibt still.\n' "$ALARM_SOUND"
+    fi
+
+    if [ -n "$VOICE" ]; then
+        printf 'Stimme:              %s\n' "$VOICE"
+    else
+        printf 'Stimme:              keine deutsche Stimme gefunden – es spricht die Standardstimme.\n'
+        printf '                     (Nachladen: Systemeinstellungen > Bedienungshilfen > Gesprochene Inhalte > Systemstimme)\n'
+    fi
+    printf 'Listen:              %s Websites, %s Apps, %s Suchbegriffe blockiert\n' "$(count_lines "$SITES_BLOCK")" "$(count_lines "$APPS_BLOCK")" "$(count_lines "$SEARCH_BLOCK")"
+
+    for f in "/Applications/Firefox.app" "$HOME/Applications/Firefox.app" "/Applications/Zen.app" "/Applications/Zen Browser.app" "/Applications/LibreWolf.app"; do
+        if [ -d "$f" ]; then
+            printf 'Achtung:             %s gefunden. Firefox-Browser lassen sich nicht mitlesen –\n' "$f"
+            printf '                     Websites dort werden NICHT erkannt. Entweder Safari/Chrome nutzen\n'
+            printf '                     oder den Browser in apps.txt eintragen (dann wird er ganz geschlossen).\n'
+        fi
+    done
+
+    # Am aussagekräftigsten ist der aktuelle Zustand des laufenden Wächters (status.txt).
+    # Ein Test aus dem Terminal würde die Erlaubnis des Terminals prüfen, nicht die des Dienstes.
+    browsers=""
+    denied=""
+    if daemon_pid; then
+        browsers=$(status_value browser_ok)
+        denied=$(status_value browser_ohne_erlaubnis)
+    fi
+    if [ -z "$browsers" ] && [ -f "$LOG" ]; then
+        browsers=$(sed -n 's/^.*Browser-Zugriff ok: //p' "$LOG" | sort -u | tr '\n' ',' | sed -e 's/,$//' -e 's/,/, /g')
+    fi
+    trim "$denied"; denied=$REPLY
+    if [ -n "$denied" ]; then
+        printf 'Browser-Erlaubnis:   FEHLT gerade für %s\n' "$denied"
+        ok=0
+    fi
+    if [ -n "$browsers" ]; then
+        printf 'Browser-Erlaubnis:   erteilt für %s\n' "$browsers"
+    else
+        printf 'Browser-Erlaubnis:   noch nicht bestätigt – öffne Safari oder Chrome einmal, während der Wächter läuft.\n'
+    fi
+    if [ -f "$LOG" ] && grep -q 'KEINE ERLAUBNIS' "$LOG" 2>/dev/null; then
+        printf '\nErlaubnis fehlt(e) – letzter Eintrag:\n'
+        grep 'KEINE ERLAUBNIS' "$LOG" | tail -n 1 | sed 's/^/  /'
+        printf '  Beheben: Systemeinstellungen > Datenschutz & Sicherheit > Automation,\n'
+        printf '  dort bei "bash" bzw. "osascript" den Browser einschalten.\n'
+        printf '  Steht dort kein Eintrag: im Terminal "tccutil reset AppleEvents" eingeben\n'
+        printf '  (setzt alle solchen Rückfragen zurück), danach: %s/grind start\n' "$BASE"
+        ok=0
+    fi
+    if [ -f "$LOG" ] && grep -q 'FEHLER' "$LOG" 2>/dev/null; then
+        printf '\nLetzte Fehler im Protokoll (%s):\n' "$LOG"
+        grep 'FEHLER' "$LOG" | tail -n 3 | sed 's/^/  /'
+    fi
+
+    printf '\n'
+    if [ "$ok" != 1 ]; then
+        echo "Es gibt Punkte zu beheben (siehe oben)."
+    elif [ -z "$browsers" ]; then
+        echo "Fast fertig: Öffne jetzt einmal deinen Browser. macOS fragt dann, ob er gesteuert"
+        echo "werden darf (einmal pro Browser) – mit \"Erlauben\" bestätigen. Ohne dieses OK"
+        echo "kann GrindGuard dort keine Websites sehen."
+    else
+        echo "Alles in Ordnung."
+    fi
+}
+
+usage() {
+    cat <<EOF
+GrindGuard $VERSION – dein Fokus-Wächter
+
+  grind status        Läuft der Wächter? Wie viele Ausrutscher heute?
+  grind fokus [Min]   Fokus-Sitzung (Standard 50): Listen eingefroren, keine Pause
+  grind notausstieg   Fokus-Sitzung vorzeitig beenden (mit 10 Minuten Wartezeit)
+  grind pause [Min]   Bewusste Pause (Standard 15, maximal 120 Minuten)
+  grind weiter        Pause sofort beenden
+  grind test          Warnung einmal zur Probe anzeigen
+  grind stats         Ausrutscher der letzten 7 Tage
+  grind edit          Blocklisten, Sprüche und Einstellungen öffnen
+  grind check ADRESSE Zeigt, ob eine Website oder Suche blockiert würde – und welche Regel
+  grind doctor        Prüfen, ob alles richtig eingerichtet ist
+  grind start         Wächter starten (danach automatisch bei jeder Anmeldung)
+  grind stop          Wächter anhalten (bis zur nächsten Anmeldung)
+  grind uninstall     Wächter entfernen
+
+Aufruf im Terminal:  $BASE/grind <Befehl>
+EOF
+}
+
+case ${1:-help} in
+    run)            daemon ;;
+    start)          cmd_start ;;
+    stop)           cmd_stop ;;
+    uninstall)      cmd_uninstall ;;
+    status)         cmd_status ;;
+    pause)          cmd_pause "$2" ;;
+    weiter|resume)  cmd_resume ;;
+    test)           cmd_test ;;
+    stats)          cmd_stats ;;
+    edit)           cmd_edit ;;
+    check|explain)  cmd_check "$2" ;;
+    fokus|focus)    cmd_fokus "$2" ;;
+    notausstieg)    cmd_notausstieg ;;
+    __corpus)       cmd_corpus "$2" ;;
+    doctor)         cmd_doctor ;;
+    help|-h|--help) usage ;;
+    *)              usage; exit 1 ;;
+esac

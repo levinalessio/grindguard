@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or help with setup
+    url: https://github.com/levinalessio/grindguard/discussions
+    about: Ask in Discussions – and run `grind doctor` first.
+  - name: Security problem
+    url: https://github.com/levinalessio/grindguard/security/advisories/new
+    about: Please report privately. Bypasses are not security issues – use the Bypass template.

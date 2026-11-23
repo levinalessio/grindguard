@@ -1,0 +1,13 @@
+# Everything is text with LF, unless stated otherwise below.
+* text=auto eol=lf
+
+# Windows package: CRLF, or cmd.exe and Windows PowerShell 5.1 trip over it.
+# (.ps1 files additionally need a UTF-8 BOM – Git keeps it, tools/check_encoding.py checks it.)
+windows/** text eol=crlf
+
+# Binaries
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary
+*.zip binary

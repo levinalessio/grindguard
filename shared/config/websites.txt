@@ -1,0 +1,109 @@
+# =============================================================================
+#  GrindGuard – gesperrte Websites
+#
+#  Eine Zeile pro Eintrag. Änderungen wirken nach etwa 15 Sekunden.
+#  Eine Zeile mit # am Anfang ist ausgeschaltet. Text hinter # ist Kommentar.
+#
+#  youtube.com                   die ganze Seite samt Unterseiten (m., www. …)
+#  youtube.com/shorts            nur dieser Bereich
+#  +music.youtube.com            Ausnahme: bleibt offen (gewinnt immer)
+#  google.com/search*udm=7*      mit Stern: Muster über die ganze Adresse
+#  suche: mp3                    jede Suche mit diesem Wort (Google, Bing, DuckDuckGo,
+#                                Yahoo, Startpage, YouTube-Suche …); ohne Umlaute
+#
+#  Testen, ob und warum etwas gesperrt ist:   grind check youtube.com/shorts
+# =============================================================================
+
+# --- Social Media ---
+instagram.com
+tiktok.com
+facebook.com
+x.com
+twitter.com
+snapchat.com
+reddit.com
+pinterest.com
+threads.net
+bsky.app
+9gag.com
+tumblr.com
+
+# --- Videos & Streaming ---
+# Lernvideos auf YouTube? Dann statt youtube.com nur youtube.com/shorts sperren.
+youtube.com
+youtu.be
+twitch.tv
+kick.com
+netflix.com
+disneyplus.com
+primevideo.com
+# Videos direkt in der Google-Suche ansehen
+google.com/search*udm=7*
+google.com/search*tbm=vid*
+
+# --- Umwege ---
+# Gesperrte Seiten über Google Übersetzer (z. B. youtube-com.translate.goog) erkennt
+# GrindGuard selbst – dafür ist keine Zeile nötig.
+# YouTube ohne youtube.com: Einbett-Adresse und alternative Oberflächen
+youtube-nocookie.com
+yewtu.be
+piped.video
+# Videos als Text lesen, YouTube-Konverter
+youtubetotranscript.com
+*ytmp3*/*
+*y2mate*/*
+savefrom.net
+ssyoutube.com
+cobalt.tools
+loader.to
+
+# --- Glücksspiel ---
+stake.com
+*casino*/*
+*.bet/*
+suche: casino
+suche: sportwetten
+
+# --- Shopping (zum Einschalten das # entfernen) ---
+#amazon.com
+#amazon.de
+#aliexpress.com
+#temu.com
+#shein.com
+#ebay.com
+#zalando.ch
+#galaxus.ch
+#digitec.ch
+#ricardo.ch
+#tutti.ch
+
+# --- News (zum Einschalten das # entfernen) ---
+#20min.ch
+#blick.ch
+#watson.ch
+#nau.ch
+#bild.de
+#spiegel.de
+
+# --- Spiele im Browser (zum Einschalten das # entfernen) ---
+#lichess.org
+#chess.com
+#poki.com
+#crazygames.com
+
+# --- Bildersuche (zum Einschalten das # entfernen) ---
+#google.com/search*udm=2*
+#google.com/search*tbm=isch*
+
+# --- Chats im Browser (zum Einschalten das # entfernen) ---
+#web.whatsapp.com
+#web.telegram.org
+#discord.com
+#messenger.com
+
+# --- Suchbegriffe: Beispiele (zum Einschalten das # entfernen) ---
+#suche: meme
+#suche: mp3
+
+# --- Ausnahmen: bleiben immer offen ---
++music.youtube.com

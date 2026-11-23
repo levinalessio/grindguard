@@ -1,0 +1,209 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux · lint, corpus, macOS engine (GNU userland)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Encoding and line endings
+        run: python3 tools/check_encoding.py
+
+      - name: ShellCheck
+        run: shellcheck --version && shellcheck macos/app/grind macos/install.sh tools/build.sh tests/corpus/run.sh tests/macos/*.sh tests/macos/bin/* tests/macos/bin_mac/*
+
+      - name: Build packages
+        run: tools/build.sh --no-zip
+
+      - name: Corpus · macOS engine vs. Python port of the Windows engine
+        run: tests/corpus/run.sh
+
+      - name: Windows title rules
+        run: python3 tests/windows/title_rules_test.py
+
+      - name: PowerShell static checks (tree-sitter)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          if "$RUNNER_TEMP/venv/bin/pip" install --quiet tree-sitter-language-pack; then
+            "$RUNNER_TEMP/venv/bin/python" tests/windows/ps_check.py windows/app/*.ps1
+          else
+            echo "::warning::tree-sitter-language-pack could not be installed – skipped. The Windows job parses with the real PowerShell anyway."
+          fi
+
+      - name: Lock screen layout (mocked AppKit)
+        run: node tests/macos/overlay_mock.js dist/macos/GrindGuard/app/lib/overlay.js
+
+      - name: macOS engine and daemon with mocked macOS commands (bash)
+        run: bash tests/macos/run_tests.sh
+
+      - name: Same under dash (POSIX)
+        run: SH=dash bash tests/macos/run_tests.sh
+
+      - name: Installer and update
+        run: bash tests/macos/run_install_test.sh
+
+  macos:
+    name: macOS · ${{ matrix.shell }} (BSD userland)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [/bin/bash, /bin/dash]
+    env:
+      SH: ${{ matrix.shell }}
+      GG_TEST_SLOW: '2'                   # runners are slower than a laptop
+      GRIND_TEST_LOCALE: en_US.UTF-8      # the locale GrindGuard uses in production
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build packages
+        run: tools/build.sh --no-zip
+
+      - name: Compile the lock screen with the real JavaScript for Automation
+        if: matrix.shell == '/bin/bash'
+        run: osacompile -l JavaScript -o "$RUNNER_TEMP/overlay.scpt" dist/macos/GrindGuard/app/lib/overlay.js
+
+      - name: Corpus on macOS
+        if: matrix.shell == '/bin/bash'
+        run: tests/corpus/run.sh
+
+      - name: Engine, lock screen and daemon with mocked macOS commands
+        run: bash tests/macos/run_tests.sh
+
+      - name: Installer and update
+        if: matrix.shell == '/bin/bash'
+        run: bash tests/macos/run_install_test.sh
+
+  launchd-smoke:
+    name: macOS · real install + launchd (informational)
+    runs-on: macos-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build packages
+        run: tools/build.sh --no-zip
+
+      - name: Install like a Safari download, start through launchd
+        env:
+          GRIND_JA: '1'
+        run: |
+          export HOME="$RUNNER_TEMP/home"
+          mkdir -p "$HOME/Library/LaunchAgents"
+          cp -R dist/macos/GrindGuard "$RUNNER_TEMP/GrindGuard"
+          # Download-Markierung wie bei einem echten Download setzen
+          find "$RUNNER_TEMP/GrindGuard" -type f -exec xattr -w com.apple.quarantine "0083;00000000;Safari;" {} \;
+          bash "$RUNNER_TEMP/GrindGuard/install.sh" < /dev/null
+          sleep 5
+          launchctl print "gui/$(id -u)/com.grindguard.agent" | grep -E 'state|last exit' || true
+          "$HOME/GrindGuard/grind" status
+          "$HOME/GrindGuard/grind" doctor || true
+
+      - name: No quarantine flag on GrindGuard's own files
+        run: |
+          export HOME="$RUNNER_TEMP/home"
+          bad=0
+          for f in "$HOME/Library/LaunchAgents/com.grindguard.agent.plist" "$HOME/GrindGuard/grind" "$HOME/GrindGuard/lib/overlay.js"; do
+            if xattr -p com.apple.quarantine "$f" > /dev/null 2>&1; then echo "::error::still quarantined: $f"; bad=1; fi
+          done
+          exit $bad
+
+      - name: Uninstall
+        if: always()
+        run: |
+          export HOME="$RUNNER_TEMP/home"
+          "$HOME/GrindGuard/grind" uninstall || launchctl bootout "gui/$(id -u)/com.grindguard.agent" || true
+
+  windows:
+    name: Windows · PowerShell 5.1
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: powershell                 # Windows PowerShell 5.1, like on users' machines
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build packages
+        shell: bash
+        run: tools/build.sh --no-zip
+
+      - name: Parse every script with the Windows PowerShell 5.1 parser
+        run: |
+          Write-Host ('PowerShell {0}' -f $PSVersionTable.PSVersion)
+          $failed = $false
+          foreach ($f in Get-ChildItem dist\windows -Recurse -Filter *.ps1) {
+            $tokens = $null; $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$tokens, [ref]$errors)
+            foreach ($e in $errors) {
+              Write-Host ('::error file={0},line={1}::{2}' -f $f.FullName, $e.Extent.StartLineNumber, $e.Message)
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: PSScriptAnalyzer (errors)
+        run: |
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+            Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+          $r = Invoke-ScriptAnalyzer -Path dist\windows -Recurse -Severity Error
+          $r | Format-Table RuleName, Line, Message -AutoSize | Out-String -Width 220 | Write-Host
+          if ($r) { exit 1 }
+
+      - name: Compile and paint the countdown ring (C#)
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $tokens = $null; $errors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path dist\windows\GrindGuard-Windows\app\grindguard.ps1), [ref]$tokens, [ref]$errors)
+          $assign = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$script:RingSource' }, $true) | Select-Object -First 1
+          Add-Type -TypeDefinition $assign.Right.Expression.Value -Language CSharp -ReferencedAssemblies System.Windows.Forms, System.Drawing
+          $ring = New-Object GGRing
+          $ring.SetBounds(0, 0, 180, 180)
+          $ring.Progress = 0.6
+          $ring.Text = '11'
+          $bmp = New-Object System.Drawing.Bitmap 180, 180
+          $ring.DrawToBitmap($bmp, (New-Object System.Drawing.Rectangle 0, 0, 180, 180))
+          Write-Host 'GGRing compiled and painted.'
+
+      - name: Corpus through the real PowerShell engine
+        run: |
+          $app = Join-Path $env:RUNNER_TEMP 'gg\app'
+          New-Item -ItemType Directory -Force -Path $app | Out-Null
+          Copy-Item dist\windows\GrindGuard-Windows\app\* $app -Recurse -Force
+          Copy-Item tests\corpus\websites.txt (Join-Path $app 'config\websites.txt') -Force
+          $urls = (Resolve-Path tests\corpus\urls.txt).Path
+          $out = @(& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $app 'grindguard.ps1') __corpus $urls)
+          $exp = @(Get-Content tests\corpus\expected.txt)
+          $bad = 0
+          for ($i = 0; $i -lt [Math]::Max($exp.Count, $out.Count); $i++) {
+            if ($exp[$i] -cne $out[$i]) {
+              Write-Host ('::error::corpus line {0}: expected [{1}], got [{2}]' -f ($i + 1), $exp[$i], $out[$i])
+              $bad++
+            }
+          }
+          Write-Host ('{0} URLs, {1} differences' -f $exp.Count, $bad)
+          if ($bad) { exit 1 }
+
+      - name: grind check explains its decision
+        run: |
+          $g = Join-Path (Resolve-Path dist\windows\GrindGuard-Windows\app) 'grindguard.ps1'
+          $a = (& powershell -NoProfile -ExecutionPolicy Bypass -File $g check 'https://www.youtube.com/watch?v=1') -join "`n"
+          $b = (& powershell -NoProfile -ExecutionPolicy Bypass -File $g check 'https://music.youtube.com/') -join "`n"
+          Write-Host $a; Write-Host $b
+          if ($a -notmatch 'BLOCKIERT' -or $a -notmatch 'Regel:') { exit 1 }
+          if ($b -notmatch 'erlaubt' -or $b -notmatch 'Ausnahme:') { exit 1 }

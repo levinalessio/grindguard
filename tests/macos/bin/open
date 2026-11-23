@@ -1,0 +1,14 @@
+#!/bin/sh
+# Mock von open: protokollieren. "open -b ID" holt die App mit dieser Bundle-ID
+# nach vorne – wie das echte open, damit die Rückkehr im Test auch wirkt.
+printf 'OPEN %s\n' "$*" >> "$MOCK_DIR/events.log"
+if [ "$1" = "-b" ] && [ -n "$2" ]; then
+    for f in "$MOCK_DIR"/apps/*.bundleid; do
+        [ -f "$f" ] || continue
+        if [ "$(cat "$f")" = "$2" ]; then
+            basename "$f" .bundleid > "$MOCK_DIR/front_asn"
+            break
+        fi
+    done
+fi
+exit 0

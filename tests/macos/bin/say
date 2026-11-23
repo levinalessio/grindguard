@@ -1,0 +1,6 @@
+#!/bin/sh
+if [ "$1" = "-v" ] && [ "$2" = "?" ]; then
+    cat "$MOCK_DIR/voices" 2>/dev/null
+    exit 0
+fi
+printf 'SAY %s\n' "$*" >> "$MOCK_DIR/events.log"

@@ -1,0 +1,170 @@
+﻿GRINDGUARD FÜR WINDOWS – dein Fokus-Wächter
+===========================================
+
+Sobald du am PC eine Ablenkung öffnest (YouTube, Instagram, Steam, eine
+gesperrte Suche …), schliesst GrindGuard sie sofort und sperrt den Bildschirm
+mit einer Warnung: dunkles Vollbild mit Countdown-Ring, Alarmton, Stimme.
+Erster Ausrutscher des Tages = 10 Sekunden Sperre, jeder weitere 5 Sekunden
+mehr (maximal 60). Wer dreimal in zehn Minuten einen Umweg sucht, bekommt
+sofort das Maximum. Danach bringt dich GrindGuard zurück zum Fenster, in dem
+du gearbeitet hast.
+
+Läuft auf Windows 10 und 11 (Windows PowerShell 5.1, ist vorinstalliert).
+
+Alles läuft nur auf deinem PC. Es wird nichts nachinstalliert und nichts
+ins Internet geschickt.
+
+
+INSTALLIEREN
+------------
+1. Das ZIP entpacken: Rechtsklick darauf > "Alle extrahieren".
+2. Im entpackten Ordner doppelt auf INSTALLIEREN.cmd klicken.
+3. Fragt Windows, ob du die Datei wirklich ausführen willst: bestätigen
+   ("Ausführen" bzw. "Weitere Informationen" > "Trotzdem ausführen"). Das
+   kommt, weil die Datei aus dem Internet stammt und nicht signiert ist.
+4. Es erscheint 6 Sekunden lang eine Test-Warnung. Danach läuft der Wächter
+   und startet bei jeder Anmeldung von selbst. Das Schild-Symbol unten rechts
+   in der Taskleiste zeigt, dass er aktiv ist.
+5. Kontrolle: PowerShell öffnen (Windows-Taste, "PowerShell" tippen, Enter)
+   und eingeben:   ~\GrindGuard\grind doctor
+
+Aktualisieren: neues ZIP entpacken und wieder INSTALLIEREN.cmd starten.
+Deine Listen und deine Statistik in %USERPROFILE%\GrindGuard bleiben. Neue
+Einträge der Vorlage zeigt das Update an und fragt, ob es sie übernehmen soll.
+
+Schul- oder Firmen-Laptop? Dort sperrt die IT oft Skripte. Dann meldet
+"grind doctor" einen Fehler, und GrindGuard kann auf diesem Gerät nicht
+laufen. Installier ihn nur, wo du das darfst.
+
+
+BEFEHLE (in PowerShell)
+-----------------------
+   ~\GrindGuard\grind status       Läuft er? Wie viele Ausrutscher heute?
+   ~\GrindGuard\grind fokus 50     Fokus-Sitzung (5 bis 240 Minuten, siehe unten)
+   ~\GrindGuard\grind notausstieg  Fokus-Sitzung vorzeitig beenden (10 Min. Wartezeit)
+   ~\GrindGuard\grind pause 20     Bewusste Pause, hier 20 Minuten (max. 120)
+   ~\GrindGuard\grind weiter       Pause sofort beenden
+   ~\GrindGuard\grind stats        Ausrutscher der letzten 7 Tage
+   ~\GrindGuard\grind edit         Listen, Sprüche und Einstellungen öffnen
+   ~\GrindGuard\grind check ADRESSE   Gesperrt? Und welche Zeile ist schuld?
+   ~\GrindGuard\grind test         Warnung zur Probe anzeigen
+   ~\GrindGuard\grind stimmen      Installierte Stimmen anzeigen
+   ~\GrindGuard\grind doctor       Prüfen, ob alles richtig eingerichtet ist
+   ~\GrindGuard\grind stop         Anhalten (bis zur nächsten Anmeldung)
+   ~\GrindGuard\grind uninstall    Entfernen
+
+In der Eingabeaufforderung (cmd) statt ~ schreiben:  %USERPROFILE%
+Status, Listen und Fokus-Sitzungen (25, 50, 90 Minuten) erreichst du auch per
+Rechtsklick auf das Schild-Symbol.
+
+
+FOKUS-SITZUNG
+-------------
+   ~\GrindGuard\grind fokus 90
+
+Für die nächsten 90 Minuten gilt: Deine Listen sind eingefroren (Änderungen
+an websites.txt wirken erst danach), pause, stop und uninstall sind gesperrt,
+Pausen und aktive Zeiten zählen nicht – der Wächter ist scharf.
+Verlängern geht jederzeit, verkürzen nicht.
+
+Notausstieg: "grind notausstieg" – du tippst einen Satz ab, danach endet die
+Sitzung nach 10 Minuten. Die Wartezeit ist Absicht: Der Impuls ist meistens
+vorbei, bevor sie um ist.
+
+Ehrlich gesagt: Wer den Prozess im Task-Manager beendet, stoppt den Wächter
+bis zur nächsten Anmeldung. Die Sitzung schützt vor dem schnellen Reflex,
+nicht vor einem Plan.
+
+
+ANPASSEN
+--------
+Im Ordner %USERPROFILE%\GrindGuard\config liegen vier Textdateien.
+Änderungen wirken nach etwa 15 Sekunden von selbst.
+
+   websites.txt        blockierte Websites, Ausnahmen und Suchbegriffe
+   apps.txt            Programme, die sofort beendet werden
+   sprueche.txt        die Texte der Warnung – schreib deine eigenen dazu
+   einstellungen.txt   Sperrzeiten, Ton, Stimme, aktive Zeiten (Standard: immer)
+
+So sehen die Zeilen in websites.txt aus:
+
+   youtube.com                  die ganze Seite samt Unterseiten
+   youtube.com/shorts           nur dieser Bereich
+   +music.youtube.com           Ausnahme: bleibt offen
+   google.com/search*udm=7*     mit Stern: Adressen, die so aufgebaut sind
+   suche: mp3                   jede Suche mit diesem Wort geht sofort zu
+                                (Google, Bing, DuckDuckGo, Yahoo, Startpage,
+                                YouTube-Suche …; Wörter ohne Umlaute)
+
+Umwege, die GrindGuard selbst erkennt: gesperrte Seiten über Google Übersetzer
+(youtube-com.translate.goog), doppelte Schrägstriche (//shorts) und
+verschlüsselte Buchstaben in der Adresse (%73horts).
+
+Die wichtigsten Einstellungen (einstellungen.txt):
+
+   TON=brutal          brutal | direkt | ruhig – wie hart die Warnung redet
+   ZURUECK=1           nach der Sperre zurück zum letzten erlaubten Fenster
+   JAGD=1              drei Ausrutscher in 10 Minuten = sofort maximale Sperre
+   HART_BEENDEN=1      Programme notfalls hart beenden (0 = nur höflich)
+   LAUTSTAERKE=100     Ton und Stimme 0 bis 100 (unter 50: leiser Systemton)
+
+
+IPHONE: WEBSITES IN SAFARI SPERREN
+----------------------------------
+Die Automation greift nur bei Apps, nicht bei Websites. Websites sperrt die
+Bildschirmzeit:
+
+1. Einstellungen > Bildschirmzeit > Inhalts- & Datenschutzbeschränkungen
+   einschalten.
+2. Dort "App Store, Medien, Web & Spiele" (ältere iOS-Versionen: "Inhalts-
+   beschränkungen") > "Webinhalte" > "Websites für Erwachsene beschränken".
+3. Unter "Nie erlauben" jede Adresse mit "Website hinzufügen" eintragen.
+   Die Namen der Menüpunkte schwanken je nach iOS-Version leicht.
+
+Am besten dieselben Seiten wie in deiner websites.txt, zum Beispiel:
+
+   youtube.com        instagram.com      tiktok.com         reddit.com
+   x.com              twitch.tv          netflix.com        9gag.com
+   translate.goog     (der Übersetzer-Umweg zu gesperrten Seiten)
+
+Falls eine Seite trotzdem aufgeht: dieselbe Adresse zusätzlich mit www.
+davor eintragen. Damit niemand die Sperre einfach ausschaltet, unter
+Bildschirmzeit einen Code setzen, den dir jemand anderes eintippt.
+
+
+GRENZEN
+-------
+* Websites erkennt GrindGuard in Chrome, Edge, Brave, Opera, Vivaldi und
+  Firefox. Die Adresse liest er über die Bedienungshilfen von Windows. Geht
+  das nicht (z. B. im Vollbild), erkennt er YouTube, Instagram, TikTok,
+  Reddit, Netflix, Twitch, Facebook, X, Lichess, Ricardo, tutti, MP3-Seiten,
+  Stake und Google-Suchen am Fenstertitel. "grind doctor" zeigt, in welchen
+  Browsern er die Adresse lesen kann.
+* Erkannt wird der Tab, den du gerade ansiehst. Geschlossen wird er mit
+  Strg+W – so, als hättest du es selbst gedrückt.
+* Solange du in der Adressleiste tippst, wartet GrindGuard, bis die Seite
+  geladen ist.
+* Programme aus apps.txt werden erst höflich geschlossen, dann hart beendet;
+  nicht Gespeichertes darin geht verloren. Programme, die als Administrator
+  laufen, kann er nicht beenden.
+* Keine deutsche Stimme installiert? Dann gibt es nur Bild und Ton.
+  Nachladen: Einstellungen > Zeit und Sprache > Sprache > Deutsch.
+* Ausserhalb einer Fokus-Sitzung kannst du den Wächter jederzeit selbst
+  anhalten. Er ist ein Werkzeug gegen den schnellen Reflex, kein Schloss.
+* Virenscanner: Ein Skript, das Tasten sendet und Programme beendet, wirkt
+  auf manche Scanner verdächtig. GrindGuard ist offen einsehbar – prüf den
+  Code, bevor du eine Ausnahme einrichtest.
+* Wer die Systemuhr verstellt, beendet Pausen und Sitzungen früher.
+
+DATENSCHUTZ
+-----------
+Alles bleibt auf deinem PC. GrindGuard schickt nichts ins Internet.
+Gespeichert wird in %USERPROFILE%\GrindGuard\state: wann welche Seite oder
+App gesperrt wurde (bei Suchen nur der Suchbegriff aus deiner Liste) und ein
+Fehlerprotokoll. Löschen: den Ordner state leeren.
+
+
+ENTFERNEN
+---------
+   ~\GrindGuard\grind uninstall
+Danach den Ordner GrindGuard in deinem Benutzerordner löschen.

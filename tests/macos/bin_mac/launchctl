@@ -1,0 +1,45 @@
+#!/bin/sh
+# Mock von launchctl: bootstrap startet den Waechter wie launchd, bootout beendet ihn.
+printf 'LAUNCHCTL %s\n' "$*" >> "$MOCK_DIR/events.log"
+pidfile="$HOME/GrindGuard/state/daemon.pid"
+case $1 in
+    bootstrap)
+        if [ -f "$MOCK_DIR/bootstrap_fails" ]; then
+            echo "Bootstrap failed: 5: Input/output error" >&2
+            exit 5
+        fi
+        plist=$3
+        [ -f "$plist" ] || exit 1
+        # wie macOS 27: plist unter Quarantäne wird geladen, aber nie gestartet
+        if [ -f "$plist.qtn" ]; then
+            printf 'LAUNCHD cannot spawn: service plist has the quarantine extended attribute\n' >> "$MOCK_DIR/events.log"
+            touch "$MOCK_DIR/loaded_not_running"
+            exit 0
+        fi
+        script=$(sed -n 's:.*<string>\(.*/grind\)</string>.*:\1:p' "$plist")
+        [ -f "$script" ] || exit 1
+        nohup /bin/bash "$script" run >> "$MOCK_DIR/daemon.out" 2>&1 &
+        exit 0
+        ;;
+    print)
+        [ -f "$MOCK_DIR/stuck_loaded" ] && exit 0
+        if [ -f "$pidfile" ]; then
+            printf '\tstate = running\n\tlast exit code = 0\n'
+            exit 0
+        fi
+        if [ -f "$MOCK_DIR/loaded_not_running" ]; then
+            printf '\tstate = not running\n\tlast exit code = 78: EX_CONFIG\n'
+            exit 0
+        fi
+        exit 113
+        ;;
+    bootout)
+        rm -f "$MOCK_DIR/loaded_not_running"
+        if [ -f "$pidfile" ]; then
+            kill "$(cat "$pidfile")" 2>/dev/null
+            exit 0
+        fi
+        exit 3
+        ;;
+esac
+exit 0

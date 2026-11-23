@@ -1,0 +1,26 @@
+# Zeilen, die in früheren Vorlagen (1.0 bis 1.2) ausgeschaltet mitgeliefert wurden.
+# Ist eine davon in der neuen Vorlage eingeschaltet, darf das Update sie bei dir
+# einschalten (mit Rückfrage). Hast du eine Zeile selbst mit # ausgeschaltet,
+# die hier nicht steht, bleibt sie aus.
+#20min.ch
+#aliexpress.com
+#amazon.com
+#amazon.de
+#bild.de
+#blick.ch
+#chess.com
+#digitec.ch
+#discord.com
+#galaxus.ch
+#google.com/search*tbm=isch*
+#google.com/search*udm=2*
+#lichess.org
+#messenger.com
+#nau.ch
+#ricardo.ch
+#spiegel.de
+#temu.com
+#watson.ch
+#web.telegram.org
+#web.whatsapp.com
+#zalando.ch

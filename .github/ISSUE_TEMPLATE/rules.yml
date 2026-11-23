@@ -1,0 +1,32 @@
+name: Default list
+description: A site, search term or app that belongs in (or out of) the default lists.
+labels: [rules]
+body:
+  - type: textarea
+    id: entries
+    attributes:
+      label: Entries
+      description: In the format of websites.txt or apps.txt, one per line
+      render: text
+      placeholder: |
+        example-videos.com
+        suche: example term
+    validations:
+      required: true
+  - type: dropdown
+    id: state
+    attributes:
+      label: Default state
+      options:
+        - On – a distraction for almost everyone
+        - Off – in the list, but commented out
+        - Remove from the default list
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why?
+      description: Who would this help, and could it block something people need for work or study?
+    validations:
+      required: true

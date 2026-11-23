@@ -1,0 +1,210 @@
+GRINDGUARD – dein Fokus-Wächter
+===============================
+
+Sobald du auf dem Mac eine Ablenkung öffnest (YouTube, Instagram, Steam …),
+schliesst GrindGuard sie sofort und sperrt den Bildschirm mit einer Warnung:
+dunkles Vollbild mit Countdown-Ring, Alarmton, Stimme. Erster Ausrutscher des
+Tages = 10 Sekunden Sperre, jeder weitere 5 Sekunden mehr (maximal 60). Wer
+dreimal in zehn Minuten einen Umweg sucht, bekommt sofort das Maximum. Danach
+bringt dich GrindGuard zurück zur App, in der du gearbeitet hast.
+
+Läuft auf macOS 13 bis 27 (Apple Silicon und Intel, soweit macOS es unterstützt).
+
+Alles läuft nur auf deinem Mac. Es wird nichts nachinstalliert und nichts
+ins Internet geschickt.
+
+
+MAC: INSTALLIEREN
+-----------------
+1. Programm "Terminal" öffnen (cmd + Leertaste, "Terminal" tippen, Enter).
+2. Diese Zeile einfügen und Enter drücken:
+
+       bash ~/Downloads/GrindGuard/install.sh
+
+   Liegt der Ordner woanders: "bash " tippen (mit Leerzeichen), dann die Datei
+   install.sh ins Terminal-Fenster ziehen und Enter drücken.
+3. Es erscheint 6 Sekunden lang eine Test-Warnung. Danach läuft der Wächter
+   und startet bei jeder Anmeldung von selbst.
+4. Einmalig erlauben: Wechsle in deinen Browser. macOS fragt, ob "bash" oder
+   "osascript" Safari/Chrome steuern darf -> "Erlauben". Ohne dieses OK kann
+   GrindGuard keine Websites sehen. (Nachträglich: Systemeinstellungen >
+   Datenschutz & Sicherheit > Automation.)
+   Die Rückfrage kommt einmal pro Browser – beim ersten Mal, wenn du ihn
+   nach der Installation benutzt. Fragt macOS später ohne solchen Anlass
+   erneut, lieber ablehnen und mit "grind doctor" nachsehen.
+5. Kontrolle:  ~/GrindGuard/grind doctor   zeigt, ob alles sitzt.
+
+Meldet macOS ein neues Hintergrundobjekt namens "bash": Das ist GrindGuard.
+
+Aktualisieren: Den alten Ordner GrindGuard in Downloads löschen (sonst heisst
+der neue "GrindGuard 2"), neues ZIP herunterladen und denselben Befehl noch
+einmal ausführen. Deine Listen und deine Statistik in ~/GrindGuard bleiben.
+Neue Einträge der Vorlage zeigt das Update an und fragt, ob es sie übernehmen
+soll.
+
+Läuft der Wächter nach einem macOS-Update nicht mehr? "grind doctor" nennt
+die Ursache, "grind start" behebt die häufigste (macOS 27 startet keine
+Autostart-Datei mit Download-Markierung).
+
+
+MAC: BEFEHLE (im Terminal)
+--------------------------
+   ~/GrindGuard/grind status       Läuft er? Wie viele Ausrutscher heute?
+   ~/GrindGuard/grind fokus 50     Fokus-Sitzung (5 bis 240 Minuten, siehe unten)
+   ~/GrindGuard/grind notausstieg  Fokus-Sitzung vorzeitig beenden (10 Min. Wartezeit)
+   ~/GrindGuard/grind pause 20     Bewusste Pause, hier 20 Minuten (max. 120)
+   ~/GrindGuard/grind weiter       Pause sofort beenden
+   ~/GrindGuard/grind stats        Ausrutscher der letzten 7 Tage
+   ~/GrindGuard/grind edit         Listen, Sprüche und Einstellungen öffnen
+   ~/GrindGuard/grind check ADRESSE   Gesperrt? Und welche Zeile ist schuld?
+   ~/GrindGuard/grind test         Warnung zur Probe anzeigen
+   ~/GrindGuard/grind doctor       Prüfen, ob alles richtig eingerichtet ist
+   ~/GrindGuard/grind stop         Anhalten (bis zur nächsten Anmeldung)
+   ~/GrindGuard/grind uninstall    Entfernen
+
+
+FOKUS-SITZUNG
+-------------
+   ~/GrindGuard/grind fokus 90
+
+Für die nächsten 90 Minuten gilt: Deine Listen sind eingefroren (Änderungen
+an websites.txt wirken erst danach), pause, stop und uninstall sind gesperrt,
+Pausen und aktive Zeiten zählen nicht – der Wächter ist scharf.
+Verlängern geht jederzeit, verkürzen nicht.
+
+Notausstieg: "grind notausstieg" – du tippst einen Satz ab, danach endet die
+Sitzung nach 10 Minuten. Die Wartezeit ist Absicht: Der Impuls ist meistens
+vorbei, bevor sie um ist.
+
+Ehrlich gesagt: Wer Administrator ist, kann jede Software auf seinem Mac
+abschalten. Die Sitzung schützt dich vor dem schnellen Reflex, nicht vor
+einem Plan.
+
+
+MAC: ANPASSEN
+-------------
+Im Ordner ~/GrindGuard/config liegen vier Textdateien. Änderungen wirken nach
+etwa 15 Sekunden von selbst.
+
+   websites.txt        blockierte Websites, Ausnahmen und Suchbegriffe
+   apps.txt            Programme, die sofort beendet werden
+   sprueche.txt        die Texte der Warnung – schreib deine eigenen dazu
+   einstellungen.txt   Sperrzeiten, Ton, Stimme, aktive Zeiten (Standard: immer)
+
+So sehen die Zeilen in websites.txt aus:
+
+   youtube.com                  die ganze Seite samt Unterseiten
+   youtube.com/shorts           nur dieser Bereich
+   +music.youtube.com           Ausnahme: bleibt offen
+   google.com/search*udm=7*     mit Stern: Adressen, die so aufgebaut sind
+   suche: mp3                   jede Suche mit diesem Wort geht sofort zu
+                                (Google, Bing, DuckDuckGo, Yahoo, Startpage,
+                                YouTube-Suche …; Wörter ohne Umlaute)
+
+Umwege, die GrindGuard selbst erkennt: gesperrte Seiten über Google Übersetzer
+(youtube-com.translate.goog), doppelte Schrägstriche (//shorts) und
+verschlüsselte Buchstaben in der Adresse (%73horts).
+
+Die wichtigsten Einstellungen (einstellungen.txt):
+
+   TON=brutal          brutal | direkt | ruhig – wie hart die Warnung redet
+   ZURUECK=1           nach der Sperre zurück zur letzten erlaubten App
+   JAGD=1              drei Ausrutscher in 10 Minuten = sofort maximale Sperre
+   HART_BEENDEN=1      Programme notfalls hart beenden (0 = nur höflich)
+   LAUTSTAERKE=100     Alarmton 0 bis 100
+
+
+IPHONE: EINRICHTEN (einmalig, etwa 5 Minuten)
+---------------------------------------------
+Kein Programm kann ein iPhone von aussen überwachen; Apple lässt das nicht zu.
+Dasselbe Verhalten baust du mit der eingebauten App "Kurzbefehle". Der Bauplan
+ist immer derselbe:
+
+   Auslöser:  App -> deine Ablenkungs-Apps (Instagram, TikTok, YouTube …)
+              -> "Geöffnet wird"
+   Aktion 1:  zum Home-Bildschirm wechseln (wirft dich sofort aus der App)
+   Aktion 2:  "Hinweis anzeigen" mit deinem Text, zum Beispiel
+              Titel: STOPP.
+              Text:  Du wolltest gerade deine Zeit verschenken.
+                     Zurück an die Arbeit.
+   Wer mehr Druck will: zusätzlich "Text sprechen" mit demselben Text.
+
+Wo du das zusammenklickst, hängt von deiner iOS-Version ab.
+
+iOS 27
+1. "Kurzbefehle" öffnen und einen neuen Kurzbefehl anlegen. Zeigt das iPhone
+   "Kurzbefehl beschreiben", kannst du den Bauplan auch in einem Satz
+   hinschreiben und das Ergebnis danach im Editor prüfen.
+2. Die beiden Aktionen hinzufügen: nach "Home-Bildschirm" suchen (englisch
+   "Go to Home Screen"), danach nach "Hinweis" ("Hinweis anzeigen").
+3. Im Kurzbefehl auf "Bearbeiten" und dann auf "Automation" tippen. Als
+   Auslöser "App" wählen, deine Apps auswählen, "Geöffnet wird".
+4. Falls das iPhone fragt: "Sofort ausführen" wählen und "Beim Ausführen
+   benachrichtigen" ausschalten.
+
+iOS 26 und älter
+1. "Kurzbefehle" öffnen -> "Automation" -> "+" bzw. "Neue Automation".
+2. "App" wählen, deine Apps auswählen, "Geöffnet wird" (früher: "Wird
+   geöffnet").
+3. "Sofort ausführen" wählen, "Beim Ausführen benachrichtigen" ausschalten,
+   dann "Weiter".
+4. "Neue leere Automation" antippen, die beiden Aktionen wie oben
+   hinzufügen, "Fertig".
+
+Danach sofort ausprobieren: eine der Apps öffnen. Anschliessend das iPhone
+einmal neu starten und noch einmal testen.
+
+Passiert nichts? In iOS 26.6 gab es einen Fehler, bei dem genau dieser
+Auslöser nach einem Neustart stumm blieb. Dann: iOS aktualisieren, die
+Automation löschen und neu anlegen. Bleibt es dabei, nimm stattdessen
+Einstellungen > Bildschirmzeit > App-Limits – weniger laut, aber zuverlässig.
+
+IPHONE: WEBSITES IN SAFARI SPERREN
+----------------------------------
+Die Automation greift nur bei Apps, nicht bei Websites. Websites sperrt die
+Bildschirmzeit:
+
+1. Einstellungen > Bildschirmzeit > Inhalts- & Datenschutzbeschränkungen
+   einschalten.
+2. Dort "App Store, Medien, Web & Spiele" (ältere iOS-Versionen: "Inhalts-
+   beschränkungen") > "Webinhalte" > "Websites für Erwachsene beschränken".
+3. Unter "Nie erlauben" jede Adresse mit "Website hinzufügen" eintragen.
+   Die Namen der Menüpunkte schwanken je nach iOS-Version leicht.
+
+Am besten dieselben Seiten wie in deiner websites.txt, zum Beispiel:
+
+   youtube.com        instagram.com      tiktok.com         reddit.com
+   x.com              twitch.tv          netflix.com        9gag.com
+   translate.goog     (der Übersetzer-Umweg zu gesperrten Seiten)
+
+Falls eine Seite trotzdem aufgeht: dieselbe Adresse zusätzlich mit www.
+davor eintragen. Damit niemand die Sperre einfach ausschaltet, unter
+Bildschirmzeit einen Code setzen, den dir jemand anderes eintippt.
+
+
+GRENZEN
+-------
+* Websites werden in Safari und in Chrome-artigen Browsern erkannt (Chrome,
+  Brave, Edge, Arc, Vivaldi, Opera). Firefox lässt sich nicht mitlesen – nutz
+  dort einen der anderen Browser oder trag "Firefox" in apps.txt ein.
+* Erkannt wird der Tab, den du gerade ansiehst. Musik in einem Hintergrund-Tab
+  stört den Wächter nicht – ein Video im Bild-in-Bild-Fenster allerdings auch
+  nicht. Das schliesst erst die Browser-Erweiterung in Version 2.
+* Programme aus apps.txt werden beendet wie mit "Sofort beenden"; nicht
+  Gespeichertes darin geht verloren. Trag nur Ablenkungen ein.
+* Ausserhalb einer Fokus-Sitzung kannst du den Wächter jederzeit selbst
+  anhalten. Er ist ein Werkzeug gegen den schnellen Reflex, kein Schloss.
+* Wer die Systemuhr verstellt, beendet Pausen und Sitzungen früher.
+
+DATENSCHUTZ
+-----------
+Alles bleibt auf deinem Mac. GrindGuard schickt nichts ins Internet.
+Gespeichert wird in ~/GrindGuard/state: wann welche Seite oder App gesperrt
+wurde (bei Suchen nur der Suchbegriff aus deiner Liste, nie die ganze Suche)
+und ein Fehlerprotokoll. Löschen: den Ordner state leeren.
+
+
+ENTFERNEN
+---------
+   ~/GrindGuard/grind uninstall
+Danach den Ordner ~/GrindGuard in den Papierkorb ziehen.

@@ -1,0 +1,43 @@
+# GrindGuard – blockierte Programme
+#
+# Ein Programm pro Zeile. Es wird sofort beendet, sobald es im Vordergrund ist.
+# Du kannst den Namen eintragen, so wie er oben links in der Menüleiste steht
+# (z. B. Steam), oder die Bundle-ID (z. B. com.valvesoftware.steam).
+# Zeilen mit # sind ausgeschaltet. Änderungen wirken nach etwa 15 Sekunden.
+#
+# Achtung: Reagiert das Programm nicht aufs normale Beenden, wird es hart beendet
+# (abschaltbar mit HART_BEENDEN=0) – nicht gespeicherte Änderungen darin
+# gehen verloren. Trag hier also nichts ein, womit du auch arbeitest.
+
+# --- Spiele ---
+Steam
+com.valvesoftware.steam
+Epic Games Launcher
+com.epicgames.EpicGamesLauncher
+Battle.net
+net.battle.app
+Riot Client
+League of Legends
+Minecraft
+com.mojang.minecraftlauncher
+Roblox
+com.roblox.RobloxPlayer
+GeForce NOW
+com.apple.Chess
+
+# --- Filme & Serien ---
+com.apple.TV
+Netflix
+Prime Video
+Disney+
+Twitch
+
+# --- Sonstiges ---
+com.apple.news
+TikTok
+
+# --- Chats (zum Einschalten das # entfernen) ---
+#Discord
+#WhatsApp
+#Telegram
+#com.apple.MobileSMS

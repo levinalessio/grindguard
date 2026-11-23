@@ -1,0 +1,36 @@
+# GrindGuard – blockierte Programme (Windows)
+#
+# Ein Programm pro Zeile: der Prozessname ohne .exe, so wie er im
+# Task-Manager unter "Details" steht (z. B. steam oder Discord).
+# Es wird sofort beendet, sobald es im Vordergrund ist. Fenster, die von einem
+# gesperrten Programm gestartet wurden (die Steam-Oberfläche, ein Spiel aus
+# Steam), gehen mit zu.
+# Zeilen mit # sind ausgeschaltet. Änderungen wirken nach etwa 15 Sekunden.
+#
+# Achtung: Reagiert das Programm nicht aufs normale Beenden, wird es hart beendet
+# (abschaltbar mit HART_BEENDEN=0) – nicht gespeicherte Änderungen darin
+# gehen verloren. Trag hier also nichts ein, womit du auch arbeitest.
+#
+# TikTok, Instagram & Co. aus dem Microsoft Store laufen in Wahrheit im
+# Edge-Browser – die sperrt websites.txt, nicht diese Liste.
+
+# --- Spiele & Launcher ---
+steam
+EpicGamesLauncher
+Battle.net
+RiotClientServices
+LeagueClient
+MinecraftLauncher
+Minecraft.Windows
+RobloxPlayerBeta
+EADesktop
+upc
+GalaxyClient
+FortniteClient-Win64-Shipping
+VALORANT-Win64-Shipping
+cs2
+
+# --- Chats (zum Einschalten das # entfernen) ---
+#Discord
+#WhatsApp
+#Telegram

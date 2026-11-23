@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Build and draft the GitHub release
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release                  # waits for the maintainer's approval
+    permissions:
+      contents: write                     # create the release
+      id-token: write                     # sign the build provenance (Sigstore)
+      attestations: write                 # store the attestation
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Preflight
+        run: |
+          set -eu
+          tag="${GITHUB_REF_NAME#v}"
+          mac=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' macos/app/grind)
+          win=$(tr -d '\r' < windows/app/grindguard.ps1 | sed -n "s/^\$script:Version *= *'\(.*\)'.*$/\1/p")
+          echo "tag=$tag  macOS=$mac  Windows=$win"
+          [ "$tag" = "$mac" ] || { echo "::error::Tag $tag passt nicht zu VERSION=$mac in macos/app/grind"; exit 1; }
+          [ "$tag" = "$win" ] || { echo "::error::Tag $tag passt nicht zu \$script:Version=$win in grindguard.ps1"; exit 1; }
+          if grep -n levinalessio README.md README.de.md SECURITY.md .github/ISSUE_TEMPLATE/*.yml; then
+            echo "::error::Platzhalter levinalessio noch nicht ersetzt (docs/LAUNCH-CHECKLIST.md, Schritt 1)"; exit 1
+          fi
+          grep -q "^## \[$tag\]" CHANGELOG.md || { echo "::error::CHANGELOG.md hat keinen Abschnitt ## [$tag]"; exit 1; }
+          if grep -q "^## \[$tag\].*unreleased" CHANGELOG.md; then
+            echo "::error::Im CHANGELOG steht bei $tag noch 'unreleased' – Datum eintragen"; exit 1
+          fi
+
+      - name: Build
+        run: tools/build.sh
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          awk -v v="$tag" '
+            index($0, "## [" v "]") == 1 { on = 1; next }
+            on && /^## / { exit }
+            on { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          {
+            echo
+            echo "---"
+            echo "Installation: see the README. Known limits: docs/BYPASS-MATRIX.md."
+            echo "Verify: \`gh attestation verify <zip> --repo $GITHUB_REPOSITORY\` and SHA256SUMS.txt."
+          } >> "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+
+      - name: Build provenance attestation
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/GrindGuard-macOS.zip
+            dist/GrindGuard-Windows.zip
+
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/GrindGuard-macOS.zip dist/GrindGuard-Windows.zip dist/SHA256SUMS.txt \
+            --draft --verify-tag \
+            --title "GrindGuard ${GITHUB_REF_NAME#v}" \
+            --notes-file "$RUNNER_TEMP/notes.md"

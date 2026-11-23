@@ -1,0 +1,32 @@
+#!/bin/sh
+# Mock von lsappinfo: Zustand liegt in $MOCK_DIR
+[ -f "$MOCK_DIR/lsappinfo_broken" ] && exit 1
+case $1 in
+    front)
+        cat "$MOCK_DIR/front_asn" 2>/dev/null
+        ;;
+    info)
+        key=$3
+        spec=$4
+        f="$MOCK_DIR/apps/$(printf '%s' "$spec" | tr ':/ ' '___')"
+        if [ -f "$MOCK_DIR/key_case_sensitive" ]; then
+            case $key in
+                bundleid) exit 0 ;;
+                bundleID) key=bundleid ;;
+            esac
+        fi
+        # macOS 27: Kopfzeile vor den Werten bzw. nur die Kopfzeile
+        if [ -f "$MOCK_DIR/ls_header" ] || [ -f "$MOCK_DIR/ls_header_only" ]; then
+            printf '"%s" %s:  (in front)\n' "$(cat "$f.name" 2>/dev/null)" "$spec"
+            [ -f "$MOCK_DIR/ls_header_only" ] && exit 0
+        fi
+        [ -f "$f.$key" ] || exit 0
+        val=$(cat "$f.$key")
+        case $key in
+            bundleid) printf '"CFBundleIdentifier"="%s"\n' "$val" ;;
+            name)     printf '"LSDisplayName"="%s"\n' "$val" ;;
+            pid)      printf '"pid"=%s\n' "$val" ;;
+        esac
+        ;;
+esac
+exit 0

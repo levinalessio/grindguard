@@ -1,0 +1,19 @@
+# Build output
+/dist/
+*.zip
+
+# Runtime state, if someone runs GrindGuard from the source tree
+state/
+
+# OS and editor clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+.venv/

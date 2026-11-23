@@ -8,11 +8,14 @@ deshalb läuft diese Prüfung im CI.
     python3 tools/check_encoding.py
 """
 import os
+import re
 import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 BOM = b'\xef\xbb\xbf'
 SKIP_DIRS = {'.git', 'dist', 'node_modules', '__pycache__'}
+SHELL_FILES = ('macos/app/grind',)
+VAR_BEFORE_NON_ASCII = re.compile(r'\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7f]')
 BINARY = ('.png', '.jpg', '.jpeg', '.gif', '.ico', '.icns', '.zip', '.svg')
 
 
@@ -53,6 +56,12 @@ def main():
                     problems.append(f'{rel}: {bare_lf} Zeilen mit LF statt CRLF')
             elif b'\r' in body:
                 problems.append(f'{rel}: enthält CR (Windows-Zeilenenden) – hier gehört LF hin')
+            if rel.startswith(('macos/', 'tests/', 'tools/')) and (rel.endswith('.sh') or rel in SHELL_FILES):
+                # bash 3.2 und dash auf macOS zählen Bytes über 127 zum Variablennamen:
+                # "$NAME“" wird dort zu einer leeren Variable. Immer "${NAME}“" schreiben.
+                for nr, line in enumerate(body.decode('utf-8').splitlines(), 1):
+                    if VAR_BEFORE_NON_ASCII.search(line):
+                        problems.append(f'{rel}:{nr}: $VARIABLE direkt vor Umlaut/Sonderzeichen – ${{VARIABLE}} schreiben')
             if body and not body.endswith(b'\n'):
                 problems.append(f'{rel}: letzte Zeile ohne Zeilenende')
     for p in problems:

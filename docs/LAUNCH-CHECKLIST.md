@@ -7,7 +7,7 @@ Für Maintainer, deshalb auf Deutsch. Der Reihe nach abarbeiten. Was hier nicht 
 - [ ] Öffentliches Repo `grindguard` anlegen. Vorher den Namen prüfen (Markenregister, App Store, bestehende Repos).
 - [ ] Den Platzhalter `GITHUB_USER` durch deinen GitHub-Namen ersetzen. Der Release-Workflow bricht ab, solange er noch irgendwo steht:
   ```sh
-  grep -rl GITHUB_USER README.md README.de.md SECURITY.md .github | xargs sed -i.bak "s/GITHUB_USER/DEINNAME/g" && find . -name '*.bak' -delete
+  grep -rl GITHUB_USER README.md README.de.md SECURITY.md .github/ISSUE_TEMPLATE | xargs sed -i.bak "s/GITHUB_USER/DEINNAME/g" && find . -name '*.bak' -delete
   ```
 - [ ] `LICENSE`: „GrindGuard contributors“ ist gültig. Deinen echten Namen nur eintragen, wenn er öffentlich sein soll.
 - [ ] Erster Push: `git init && git add -A && git commit -m "GrindGuard 1.3" && git push`. `dist/` ist ignoriert.

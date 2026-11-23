@@ -432,7 +432,7 @@ site_blocked() {        # 0 = blockieren; setzt B_NAME (für Warnung und Statist
     # Suchbegriffe zuerst: dann nennt die Warnung „Suche nach mp3“ statt nur google.com
     if search_hit; then
         # shellcheck disable=SC1111   # deutsche Anführungszeichen, gehören zum Text
-        B_NAME="Suche nach „$S_HIT“"
+        B_NAME="Suche nach „${S_HIT}“"
         return 0
     fi
     if site_match "$SITES_BLOCK"; then
@@ -1688,7 +1688,7 @@ cmd_check() {   # $1 = Adresse; zeigt, ob sie blockiert würde, und welche Regel
     if site_blocked; then
         if [ -n "$S_HIT" ]; then
             # shellcheck disable=SC1111
-            echo "BLOCKIERT  $U_HOST$U_PATH  (Suchbegriff „$S_HIT“)"
+            echo "BLOCKIERT  $U_HOST$U_PATH  (Suchbegriff „${S_HIT}“)"
             find_rule search && printf '  Regel:    %s  (%s, Zeile %s)\n' "$R_TEXT" "$where" "$R_LINE"
         else
             echo "BLOCKIERT  $U_HOST$U_PATH"
@@ -1820,7 +1820,7 @@ cmd_stats() {
         bar=""
         k=0
         while [ "$k" -lt "$c" ] && [ "$k" -lt 40 ]; do
-            bar="$bar█"
+            bar="${bar}█"
             k=$((k + 1))
         done
         printf '  %s %s  %2s  %s\n' "$(wd_name "$dow")" "$lab" "$c" "$bar"

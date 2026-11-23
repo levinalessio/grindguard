@@ -11,6 +11,7 @@ First public release.
 ### Fixed
 - **macOS 27:** launchd refuses to start a LaunchAgent whose plist carries the download quarantine flag, and GrindGuard used to swallow that error. The plist is now written atomically, the flag is removed from GrindGuard's own files only, and `grind start` and `grind doctor` show launchd's real error and state.
 - **macOS 27:** `lsappinfo` now prints a header line (`"Terminal" ASN:…: (in front)`) before the requested value. GrindGuard read that line as the app name, never found the bundle ID, did not recognize browsers and therefore blocked no websites. Values are now read only from `KEY=value` lines, and if lsappinfo yields nothing usable, GrindGuard falls back to AppleScript.
+- **macOS:** `/bin/bash` 3.2 and dash on macOS treat bytes above 127 as part of a variable name, so `"$S_HIT“"` came out empty. The lock screen said „Suche nach „“ without the term, and the bars in `grind stats` broke. All such variables are now braced, and `tools/check_encoding.py` rejects new ones.
 - Path rules could be bypassed with doubled slashes (`//shorts`) or percent-encoded letters (`/%73horts`).
 - Search terms were only found in the `q=` parameter. They are now also found in `p`, `query`, `text`, `wd`, `search_query`, `search` and `s` (Yahoo, Startpage, Yandex, Baidu, YouTube search, site searches), including `+` and `%XX` encoding.
 - Overnight active times such as `22:00-02:00` checked the wrong weekday after midnight.

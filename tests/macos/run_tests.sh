@@ -320,7 +320,7 @@ for u in \
     want=${u%%|*}; rest=${u#*|}; url=${rest%|*}; kw=${rest##*|}
     out=$(grind check "$url" | head -n 1)
     case $want in
-        B) if [ -n "$kw" ]; then exp="BLOCKIERT*(Suchbegriff „$kw“)"; else exp="BLOCKIERT*"; fi ;;
+        B) if [ -n "$kw" ]; then exp="BLOCKIERT*(Suchbegriff „${kw}“)"; else exp="BLOCKIERT*"; fi ;;
         E) exp="erlaubt*" ;;
     esac
     case $out in

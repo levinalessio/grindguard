@@ -33,8 +33,8 @@ jobs:
           echo "tag=$tag  macOS=$mac  Windows=$win"
           [ "$tag" = "$mac" ] || { echo "::error::Tag $tag passt nicht zu VERSION=$mac in macos/app/grind"; exit 1; }
           [ "$tag" = "$win" ] || { echo "::error::Tag $tag passt nicht zu \$script:Version=$win in grindguard.ps1"; exit 1; }
-          if grep -n levinalessio README.md README.de.md SECURITY.md .github/ISSUE_TEMPLATE/*.yml; then
-            echo "::error::Platzhalter levinalessio noch nicht ersetzt (docs/LAUNCH-CHECKLIST.md, Schritt 1)"; exit 1
+          if grep -n GITHUB_USER README.md README.de.md SECURITY.md .github/ISSUE_TEMPLATE/*.yml; then
+            echo "::error::Platzhalter GITHUB_USER noch nicht ersetzt (docs/LAUNCH-CHECKLIST.md, Schritt 1)"; exit 1
           fi
           grep -q "^## \[$tag\]" CHANGELOG.md || { echo "::error::CHANGELOG.md hat keinen Abschnitt ## [$tag]"; exit 1; }
           if grep -q "^## \[$tag\].*unreleased" CHANGELOG.md; then

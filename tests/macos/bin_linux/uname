@@ -1,0 +1,6 @@
+#!/bin/sh
+# Mock: tut so, als liefe das Installationsprogramm nicht auf einem Mac (Test "kein macOS").
+case $1 in
+    -m) echo x86_64 ;;
+    *)  echo Linux ;;
+esac

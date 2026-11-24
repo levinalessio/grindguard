@@ -10,7 +10,8 @@ set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 [ -d "$ROOT/dist/macos/GrindGuard" ] || "$ROOT/tools/build.sh" --no-zip > /dev/null
-T=$(mktemp -d "${TMPDIR:-/tmp}/ggcorpus.XXXXXX")
+TMPBASE=${TMPDIR:-/tmp}
+T=$(mktemp -d "${TMPBASE%/}/ggcorpus.XXXXXX")
 trap 'rm -rf "$T"' EXIT
 FAIL=0
 

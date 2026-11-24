@@ -9,7 +9,8 @@ check() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "erwartet [$2], bekomm
 # laeuft der Prozess wirklich noch? (ein noch nicht abgeraeumter Zombie zaehlt nicht)
 alive() { case $(ps -p "$1" -o stat= 2>/dev/null) in ''|Z*) return 1 ;; esac; return 0; }
 
-T=$(mktemp -d "${TMPDIR:-/tmp}/gginst.XXXXXX")
+TMPBASE=${TMPDIR:-/tmp}; TMPBASE=${TMPBASE%/}   # macOS: TMPDIR endet auf "/"
+T=$(mktemp -d "$TMPBASE/gginst.XXXXXX")
 export MOCK_DIR="$T/mock"; mkdir -p "$MOCK_DIR/apps" "$T/Downloads"
 : > "$MOCK_DIR/events.log"
 echo 1 > "$MOCK_DIR/overlay_sleep"
@@ -77,7 +78,7 @@ P2=$(cat "$T/GrindGuard/state/daemon.pid")
 check "Waechter wurde neu gestartet" 1 "$([ -n "$P2" ] && [ "$P1" != "$P2" ] && alive "$P2" && ! alive "$P1" && echo 1)"
 
 echo "2b. Update einer aelteren Installation (eigene Liste bleibt, Neues wird ergaenzt)"
-U=$(mktemp -d "${TMPDIR:-/tmp}/ggupd.XXXXXX")
+U=$(mktemp -d "$TMPBASE/ggupd.XXXXXX")
 mkdir -p "$U/GrindGuard/lib" "$U/GrindGuard/config" "$U/GrindGuard/state"
 sed 's/^VERSION=".*"$/VERSION="1.2"/' "$PKG/app/grind" > "$U/GrindGuard/grind"
 for f in apps.txt einstellungen.txt sprueche.txt; do cp "$PKG/app/config/$f" "$U/GrindGuard/config/$f"; done
@@ -153,7 +154,7 @@ echo "4. Unvollstaendiges Paket / falsches System"
 mkdir -p "$T/kaputt"; cp "$PKG/install.sh" "$T/kaputt/"
 OUT=$(PATH="$HERE/bin_mac:$HERE/bin:$PATH" bash "$T/kaputt/install.sh" 2>&1); RC=$?
 check "fehlende Dateien: Abbruch mit Hinweis" "1 1" "$RC $(printf '%s' "$OUT" | grep -c 'vollständig entpacken')"
-OUT=$(bash "$T/Downloads/GrindGuard/install.sh" 2>&1); RC=$?
+OUT=$(PATH="$HERE/bin_linux:$PATH" bash "$T/Downloads/GrindGuard/install.sh" 2>&1); RC=$?
 check "kein macOS: Abbruch" "1 1" "$RC $(printf '%s' "$OUT" | grep -c 'Dieses Paket ist für macOS')"
 
 rm -rf "$T"

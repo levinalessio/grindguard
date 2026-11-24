@@ -26,7 +26,8 @@ wait_gone() {   # $1 = PID, $2 = höchstens so viele Viertelsekunden warten; gib
 }
 
 setup() {
-    T=$(mktemp -d "${TMPDIR:-/tmp}/ggtest.XXXXXX")
+    TMPBASE=${TMPDIR:-/tmp}   # macOS: TMPDIR endet auf "/"
+    T=$(mktemp -d "${TMPBASE%/}/ggtest.XXXXXX")
     cp -R "$APP" "$T/app"
     export MOCK_DIR="$T/mock"
     mkdir -p "$MOCK_DIR/apps" "$T/app/state"

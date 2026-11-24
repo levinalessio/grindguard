@@ -4,7 +4,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/). Releases are Gi
 
 ## [Unreleased]
 
-## [1.3] – unreleased
+## [1.3] – 2026-11-24
 
 First public release.
 

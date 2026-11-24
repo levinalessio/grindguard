@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Encoding and line endings
         run: python3 tools/check_encoding.py
@@ -67,7 +67,7 @@ jobs:
       GG_TEST_SLOW: '2'                   # runners are slower than a laptop
       GRIND_TEST_LOCALE: en_US.UTF-8      # the locale GrindGuard uses in production
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Build packages
         run: tools/build.sh --no-zip
@@ -93,7 +93,7 @@ jobs:
     timeout-minutes: 10
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Build packages
         run: tools/build.sh --no-zip
@@ -136,7 +136,7 @@ jobs:
       run:
         shell: powershell                 # Windows PowerShell 5.1, like on users' machines
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Build packages
         shell: bash

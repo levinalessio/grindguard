@@ -49,7 +49,13 @@ xattr -d com.apple.quarantine ~/Library/LaunchAgents/com.grindguard.agent.plist
 
 1. Download `GrindGuard-Windows.zip` from [Releases](../../releases), right-click → **Extract All**.
 2. Double-click `INSTALLIEREN.cmd`. Windows warns you because the file comes from the internet and is not signed (yet). Choose **More info → Run anyway**.
-3. A 6-second test warning appears. The shield icon in the tray shows the guard is active. Right-click it for status, lists and focus sessions.
+3. A 6-second test warning appears. The **G.** icon in the tray shows the guard is active (black = active, red = focus session, grey = paused). Click it for focus sessions, pause and settings.
+
+**Settings** (Start menu → GrindGuard, or click the icon): switch every site, search term and program on or off individually, add your own entries, block a running program with one click, choose tone and design of the lock screen, lock times, active hours and see your stats. Every change applies immediately.
+
+**Updating:** Settings → Über → *Nach Updates suchen*. GrindGuard downloads the new version from GitHub, verifies the checksum and runs the installer. It never checks on its own.
+
+**Uninstalling:** like any other program under Windows Settings → Apps, with `DEINSTALLIEREN.cmd` in the GrindGuard folder, or in the tray menu under *Mehr*. Not during a focus session.
 4. Check: open PowerShell and run `~\GrindGuard\grind doctor`
 
 **Browsers on Windows:** Chrome, Edge, Brave, Opera, Vivaldi, Chromium, Thorium, Arc, Comet, Firefox, LibreWolf, Waterfox, Floorp and Zen. GrindGuard reads the address bar through Windows UI Automation. When that does not work (fullscreen video, for example), it falls back to window-title rules.
@@ -72,7 +78,9 @@ iOS does not let any program watch other apps. The macOS readme (`LIESMICH.txt`)
 | `grind check <url>` | Would this be blocked, and which line of your list is responsible? |
 | `grind stats` | Slips over the last 7 days. |
 | `grind edit` | Open lists, quotes and settings. |
-| `grind test` | Show the warning once. |
+| `grind test [design]` | Show the warning once (Windows: `nacht`, `kobalt`, `papier`, `lexikon`, `bordeaux`). |
+| `grind einstellungen` | Windows: open the settings. |
+| `grind update` | Windows: fetch and install the latest version from GitHub. |
 | `grind doctor` | Check permissions, autostart, browsers and the alarm sound. |
 | `grind stop` / `grind uninstall` | Stop until next login / remove. Not available during a focus session. |
 

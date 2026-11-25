@@ -23,6 +23,11 @@ if [ ! -f "$SRC/app/grind" ] || [ ! -f "$SRC/app/lib/overlay.js" ]; then
     echo "Bitte das ZIP vollständig entpacken und es noch einmal versuchen."
     exit 1
 fi
+if [ ! -f "$SRC/app/config/websites.txt" ]; then
+    echo "Das ist der Quellcode von GitHub (\"Code > Download ZIP\"), nicht das fertige Paket."
+    echo "Lade GrindGuard-macOS.zip hier herunter: https://github.com/levinalessio/grindguard/releases/latest"
+    exit 1
+fi
 
 NEW_VERSION=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$SRC/app/grind" | head -n 1)
 UPDATE=0

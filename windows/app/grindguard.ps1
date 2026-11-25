@@ -16,7 +16,7 @@ param(
     [Parameter(Position = 1, ValueFromRemainingArguments = $true)][string[]]$Rest = @()
 )
 
-$script:Version      = '1.3'
+$script:Version      = '1.4'
 $script:Base         = $PSScriptRoot
 $script:SelfPath     = $PSCommandPath
 $script:ConfDir      = Join-Path $script:Base 'config'
@@ -36,6 +36,11 @@ $script:FocusDir     = Join-Path $script:StateDir 'fokus'
 $script:NotSatz      = 'Ich breche meine Fokus-Sitzung bewusst ab'
 $script:ConfSrc      = $script:ConfDir
 $script:GrindCmd     = Join-Path $script:Base 'grind.cmd'
+$script:UiFile       = Join-Path $script:Base 'grindguard-ui.cs'
+$script:IconFile     = Join-Path $script:Base 'grindguard.ico'
+$script:OpenFlag     = Join-Path $script:StateDir 'einstellungen_oeffnen'
+$script:UpdateRepo   = 'levinalessio/grindguard'
+$script:UninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\GrindGuard'
 $script:RunKey       = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $script:RunName      = 'GrindGuard'
 $script:MutexName    = 'Local\GrindGuard-Waechter'
@@ -118,6 +123,9 @@ public static class GGNative
     [DllImport("user32.dll")]
     public static extern bool IsIconic(IntPtr hWnd);
 
+    [DllImport("user32.dll")]
+    public static extern bool AllowSetForegroundWindow(int processId);
+
     public static string Title(IntPtr hWnd)
     {
         StringBuilder sb = new StringBuilder(1024);
@@ -149,54 +157,34 @@ public static class GGNative
 }
 '@
 
-# Countdown-Ring für die Warnung. Wird nur geladen, wenn die Warnung erscheint;
-# klappt das nicht, zeigt die Warnung die Zahl ohne Ring.
-$script:RingSource = @'
-using System;
-using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.Windows.Forms;
-
-public class GGRing : Control
-{
-    public float Progress = 1f;
-    public Color Accent = Color.FromArgb(237, 46, 61);
-    public Color Track = Color.FromArgb(28, 255, 255, 255);
-
-    public GGRing()
-    {
-        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
-                 ControlStyles.UserPaint | ControlStyles.SupportsTransparentBackColor, true);
-        BackColor = Color.Transparent;
-    }
-
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        Graphics g = e.Graphics;
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-        float lw = Math.Max(4f, Math.Min(Width, Height) * 0.035f);
-        RectangleF r = new RectangleF(lw, lw, Width - 2 * lw, Height - 2 * lw);
-        using (Pen t = new Pen(Track, lw)) { g.DrawEllipse(t, r); }
-        if (Progress > 0.002f)
-        {
-            using (Pen p = new Pen(Accent, lw))
-            {
-                p.StartCap = LineCap.Round;
-                p.EndCap = LineCap.Round;
-                g.DrawArc(p, r, -90f, 360f * Math.Min(1f, Progress));
-            }
-        }
-        TextRenderer.DrawText(g, Text, Font, ClientRectangle, ForeColor,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-    }
-}
-'@
-
 # Diese Fenster sind nie das Ziel der Rückkehr (Taskleiste, Startmenü, Sperrbildschirm …)
 $script:NoReturn = @('explorer', 'lockapp', 'logonui', 'searchhost', 'searchapp', 'searchui',
     'startmenuexperiencehost', 'shellexperiencehost', 'textinputhost', 'consent', 'dwm')
 
 $script:SearchParams = @('q', 'p', 'query', 'text', 'wd', 'search_query', 'search', 's')
+
+# Welche Designs der Sperre bei "wechselnd" je nach Ton nacheinander kommen
+$script:PlateSets = @{
+    brutal = @('nacht', 'kobalt', 'lexikon')
+    direkt = @('lexikon', 'papier', 'kobalt')
+    ruhig  = @('papier', 'bordeaux')
+}
+$script:PlateNames = @('nacht', 'kobalt', 'papier', 'lexikon', 'bordeaux')
+
+# Kobalt: dieser Satz wird neunmal "geschrieben", bis die Sperre vorbei ist
+$script:KobaltLines = @('Ich arbeite jetzt weiter.', 'Ich entscheide, nicht mein Feed.',
+    'Erst die Arbeit. Dann der Rest.', 'Ich bleibe dran.')
+
+# Lexikon: Wörterbucheinträge statt Spruch
+$script:Lexikon = @(
+    @{ W = 'Prokrastination.'; K = '(Nomen)'; D = 'Das, was du gerade machst, statt das, was du dir vorgenommen hast.' },
+    @{ W = 'Ausrede.'; K = '(Nomen)'; D = 'Ein guter Grund, der zufällig genau dann auftaucht, wenn es anstrengend wird.' },
+    @{ W = 'Später.'; K = '(Adverb)'; D = 'Das Wort, an dem die meisten Ziele scheitern.' },
+    @{ W = 'Disziplin.'; K = '(Nomen)'; D = 'Das tun, was du dir vorgenommen hast. Auch wenn niemand zuschaut.' },
+    @{ W = 'Gewohnheit.'; K = '(Nomen)'; D = 'Was du heute dreimal tust, tust du morgen, ohne zu fragen.' },
+    @{ W = 'Fokus.'; K = '(Nomen)'; D = 'Nein sagen zu allem, was jetzt nicht dran ist. Auch zu diesem Tab.' }
+)
+$script:LexikonJagd = @{ W = 'Umweg.'; K = '(Nomen)'; D = 'Der dritte Versuch in zehn Minuten, doch noch durchzukommen. Er führt nirgendwohin.' }
 
 $script:CalmQuotes = @(
     'Kurz durchatmen. Dann den nächsten kleinen Schritt.',
@@ -271,7 +259,7 @@ function Import-Settings {
         SperrStart = 10; SperrPlus = 5; SperrMax = 60
         Stimme = 1; StimmenName = ''; Alarmton = 1
         IntervallMs = 1000; ZeitVon = 0; ZeitBis = 2400; Tage = '1234567'
-        Ton = 'brutal'; Zurueck = 1; Jagd = 1; HartBeenden = 1; Lautstaerke = 100
+        Ton = 'brutal'; Zurueck = 1; Jagd = 1; HartBeenden = 1; Lautstaerke = 100; Design = 'wechselnd'
     }
     foreach ($raw in (Get-ConfigLines $script:SettingsFile)) {
         $line = $raw.Trim()
@@ -301,6 +289,7 @@ function Import-Settings {
             'JAGD'            { if ($val -match '^[01]$') { $s.Jagd = [int]$val } }
             'HART_BEENDEN'    { if ($val -match '^[01]$') { $s.HartBeenden = [int]$val } }
             'LAUTSTAERKE'     { if ($val -match '^(0|[1-9][0-9]?|100)$') { $s.Lautstaerke = [int]$val } }
+            'DESIGN'          { if ($val -match '^(wechselnd|nacht|kobalt|papier|lexikon|bordeaux)$') { $s.Design = $val } }
             'AKTIVE_ZEIT' {
                 if ($val -match '^([0-2][0-9]):([0-5][0-9])-([0-2][0-9]):([0-5][0-9])$') {
                     $s.ZeitVon = [int]($Matches[1] + $Matches[2])
@@ -837,51 +826,27 @@ function Start-Speech([string]$Text) {
     } catch { }
 }
 
-$script:RingReady = $null
+$script:UiReady = $null
+$script:UiError = ''
 
-function Initialize-Ring {
-    # lädt das Ring-Steuerelement einmal; $false = Warnung ohne Ring
-    if ($null -ne $script:RingReady) { return $script:RingReady }
+function Initialize-Ui {
+    # lädt Sperrbildschirm, Menü und Einstellungen (grindguard-ui.cs) einmal;
+    # $false = es bleibt beim einfachen Dialogfenster
+    if ($null -ne $script:UiReady) { return $script:UiReady }
     try {
-        if (-not ('GGRing' -as [type])) {
-            Add-Type -TypeDefinition $script:RingSource -Language CSharp -ReferencedAssemblies System.Windows.Forms, System.Drawing -ErrorAction Stop
+        Initialize-Gui
+        if (-not ('GGPlates' -as [type])) {
+            if (-not (Test-Path -LiteralPath $script:UiFile)) { throw ('Datei fehlt: {0}' -f $script:UiFile) }
+            $src = [System.IO.File]::ReadAllText($script:UiFile, [System.Text.Encoding]::UTF8)
+            Add-Type -TypeDefinition $src -Language CSharp -ReferencedAssemblies System.Windows.Forms, System.Drawing -IgnoreWarnings -ErrorAction Stop
         }
-        $script:RingReady = $true
+        $script:UiReady = $true
     } catch {
-        $script:RingReady = $false
-        Write-LogOnce ('HINWEIS: Countdown-Ring nicht verfügbar ({0}) – Warnung ohne Ring.' -f $_.Exception.Message)
+        $script:UiReady = $false
+        $script:UiError = $_.Exception.Message
+        Write-LogOnce ('HINWEIS: Oberfläche nicht verfügbar ({0}) – einfache Anzeige.' -f $script:UiError)
     }
-    return $script:RingReady
-}
-
-function New-GGFont([string[]]$Names, [double]$Px, [bool]$Bold) {
-    # erste installierte Schrift aus der Liste; Grösse in Pixeln
-    $style = [System.Drawing.FontStyle]::Regular
-    if ($Bold) { $style = [System.Drawing.FontStyle]::Bold }
-    foreach ($n in $Names) {
-        $f = New-Object System.Drawing.Font -ArgumentList $n, ([single]$Px), $style, ([System.Drawing.GraphicsUnit]::Pixel)
-        if ($f.Name -eq $n) { return $f }
-        $f.Dispose()
-    }
-    return (New-Object System.Drawing.Font -ArgumentList 'Segoe UI', ([single]$Px), $style, ([System.Drawing.GraphicsUnit]::Pixel))
-}
-
-function Add-OverlayLabel($Form, [string]$Text, [int]$X, [int]$Y, [int]$W, [int]$H, $Font, $Color, [string]$Align = 'center') {
-    $lbl = New-Object System.Windows.Forms.Label
-    $lbl.AutoSize = $false
-    $lbl.SetBounds($X, $Y, $W, $H)
-    $lbl.Text = $Text
-    $lbl.ForeColor = $Color
-    $lbl.BackColor = [System.Drawing.Color]::Transparent
-    switch ($Align) {
-        'left'  { $lbl.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft }
-        'right' { $lbl.TextAlign = [System.Drawing.ContentAlignment]::MiddleRight }
-        default { $lbl.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter }
-    }
-    $lbl.Font = $Font
-    $lbl.UseMnemonic = $false
-    $Form.Controls.Add($lbl)
-    return $lbl
+    return $script:UiReady
 }
 
 function Show-FallbackPopup([int]$Seconds, [string]$Head, [string]$Quote, [string]$Detail) {
@@ -892,90 +857,77 @@ function Show-FallbackPopup([int]$Seconds, [string]$Head, [string]$Quote, [strin
     } catch { }
 }
 
-function Show-Warning([int]$Seconds, [string]$Head, [string]$Quote, [string]$Detail, [string]$Speak, [string]$Counter = '') {
-    # Gibt 'vollbild' oder 'dialog' zurück.
-    # Aufbau von oben nach unten: Akzentlinie, Marke + Zähler, Überschrift, Ring mit
-    # Restsekunden, Spruch, Detail, Fusszeile – auf jedem Bildschirm.
+function Get-QuoteLines {
+    $q = New-Object System.Collections.Generic.List[string]
+    if ($script:S.Ton -eq 'ruhig') { foreach ($c in $script:CalmQuotes) { $q.Add($c) } }
+    foreach ($l in (Get-ConfigLines $script:QuotesFile)) {
+        $t = $l.Trim()
+        if ($t -ne '' -and -not $t.StartsWith('#')) { $q.Add($t) }
+    }
+    return [string[]]$q.ToArray()
+}
+
+function Get-Plate([int]$N, [int]$Hunt) {
+    # welches Design die Sperre hat: fest gewählt oder je nach Ton abwechselnd
+    if ($script:S.Design -and $script:S.Design -ne 'wechselnd') { return $script:S.Design }
+    if ($Hunt -ge 3) {
+        if ($script:S.Ton -eq 'ruhig') { return 'papier' }
+        return 'lexikon'
+    }
+    $set = $script:PlateSets[$script:S.Ton]
+    if (-not $set) { $set = $script:PlateSets['brutal'] }
+    return $set[([math]::Max(1, $N) - 1) % $set.Count]
+}
+
+function New-LockContent([string]$Plate, [string]$Head, [string]$Quote, [string]$Detail, [string]$Counter, [int]$N, [int]$Hunt) {
+    $c = @{ Plate = $Plate; Head = $Head; Quote = $Quote; Detail = $Detail; Counter = $Counter; Word = ''; WordClass = ''; Line = '' }
+    if ($Plate -eq 'lexikon') {
+        $e = $script:Lexikon[([math]::Max(1, $N) - 1 + (Get-Date).DayOfYear) % $script:Lexikon.Count]
+        if ($Hunt -ge 3) { $e = $script:LexikonJagd }
+        $c.Word = $e.W
+        $c.WordClass = $e.K
+        $c.Quote = $e.D
+    }
+    if ($Plate -eq 'kobalt') {
+        $c.Line = $script:KobaltLines[([math]::Max(1, $N) - 1) % $script:KobaltLines.Count]
+    }
+    return $c
+}
+
+function Show-Warning([int]$Seconds, $Content, [string]$Speak) {
+    # Gibt 'vollbild' oder 'dialog' zurück. $Content kommt von New-LockContent.
+    # Auf jedem Bildschirm ein Sperrfenster; Taskleiste nach hinten, Windows-Taste und
+    # Alt+Tab sind bis zum Ende aus. Strg+Alt+Entf lässt Windows immer zu.
     if ($Seconds -lt 3) { $Seconds = 3 }
     if ($Seconds -gt 300) { $Seconds = 300 }
-    if (-not $Speak) { $Speak = $Head }
+    if (-not $Speak) { $Speak = $Content.Head }
     $forms = New-Object System.Collections.ArrayList
-    $numbers = New-Object System.Collections.ArrayList
-    $footers = New-Object System.Collections.ArrayList
-    $rings = New-Object System.Collections.ArrayList
     $mode = 'vollbild'
     try {
         Initialize-Gui
-        $haveRing = Initialize-Ring
-        $script:OverlayDone = $false
-        $accentRgb = @{ brutal = @(237, 46, 61); direkt = @(250, 158, 46); ruhig = @(102, 173, 250) }[$script:S.Ton]
-        if (-not $accentRgb) { $accentRgb = @(237, 46, 61) }
-        $accent = [System.Drawing.Color]::FromArgb($accentRgb[0], $accentRgb[1], $accentRgb[2])
-        $bg = [System.Drawing.Color]::FromArgb(9, 9, 11)
-        $white = [System.Drawing.Color]::FromArgb(247, 247, 250)
-        $soft = [System.Drawing.Color]::FromArgb(158, 160, 171)
+        if (-not (Initialize-Ui)) { throw ('Oberfläche nicht geladen: {0}' -f $script:UiError) }
+        $c = New-Object GGLockContent
+        $c.Plate = [string]$Content.Plate
+        $c.Head = [string]$Content.Head
+        $c.Quote = [string]$Content.Quote
+        $c.Detail = [string]$Content.Detail
+        $c.Counter = [string]$Content.Counter
+        $c.Word = [string]$Content.Word
+        $c.WordClass = [string]$Content.WordClass
+        $c.Line = [string]$Content.Line
+        $c.Page = [string[]]@(Get-QuoteLines)
+        [GGLockWindow]::Done = $false
         $fade = [System.Windows.Forms.SystemInformation]::UIEffectsEnabled
-        $display = @('Segoe UI Variable Display', 'Segoe UI')
-        $textFont = @('Segoe UI Variable Text', 'Segoe UI')
-        $mono = @('Cascadia Mono', 'Consolas', 'Segoe UI')
         foreach ($scr in [System.Windows.Forms.Screen]::AllScreens) {
-            $b = $scr.Bounds
-            $f = New-Object System.Windows.Forms.Form
-            $f.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
-            $f.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
-            $f.Bounds = $b
-            $f.BackColor = $bg
-            $f.TopMost = $true
-            $f.ShowInTaskbar = $false
-            $f.Text = 'GrindGuard'
+            $f = New-Object GGLockWindow -ArgumentList $scr.Bounds, $c
             if ($fade) { $f.Opacity = 0 }
-            # Alt+F4 & Co. wirken erst, wenn die Zeit um ist
-            $f.Add_FormClosing({
-                param($formSender, $closeArgs)
-                if (-not $script:OverlayDone) { $closeArgs.Cancel = $true }
-            })
-            $W = $b.Width
-            $H = $b.Height
-            $x = [int]($W * 0.08)
-            $cw = [int]($W * 0.84)
-            $edge = [int][math]::Max(24, [math]::Min($W, $H) * 0.04)
-            $big = [math]::Min($H * 0.11, $W * 0.075)
-            $mid = [math]::Min($H * 0.036, $W * 0.024)
-            $small = [math]::Max(12, $mid * 0.66)
-            $ring = [int][math]::Min($H * 0.24, $W * 0.2)
-            $ringTop = [int]($H * 0.64 - $ring)
-            $rowH = [int]($small * 1.6)
-
-            $bar = New-Object System.Windows.Forms.Panel
-            $bar.SetBounds(0, 0, $W, 6)
-            $bar.BackColor = $accent
-            $f.Controls.Add($bar)
-            [void](Add-OverlayLabel $f 'GRINDGUARD' $edge $edge ([int]($W * 0.4)) $rowH (New-GGFont $textFont $small $true) $soft 'left')
-            [void](Add-OverlayLabel $f $Counter ([int]($W * 0.5)) $edge ([int]($W * 0.5 - $edge)) $rowH (New-GGFont $mono $small $true) $accent 'right')
-            [void](Add-OverlayLabel $f $Head $x ([int]($H * 0.36 - $big * 1.3)) $cw ([int]($big * 1.3)) (New-GGFont $display $big $true) $white)
-            if ($haveRing) {
-                $r = New-Object GGRing
-                $r.SetBounds([int](($W - $ring) / 2), $ringTop, $ring, $ring)
-                $r.Accent = $accent
-                $r.ForeColor = $white
-                $r.Font = New-GGFont $mono ($ring * 0.3) $false
-                $r.Text = [string]$Seconds
-                $f.Controls.Add($r)
-                [void]$rings.Add($r)
-                [void]$numbers.Add($r)
-            } else {
-                $nl = Add-OverlayLabel $f ([string]$Seconds) ([int](($W - $ring) / 2)) ([int]($ringTop + $ring * 0.3)) $ring ([int]($ring * 0.4)) (New-GGFont $mono ($ring * 0.3) $false) $white
-                [void]$numbers.Add($nl)
-            }
-            [void](Add-OverlayLabel $f $Quote $x ([int]($H * 0.66)) $cw ([int]($H * 0.12)) (New-GGFont $textFont $mid $true) $white)
-            [void](Add-OverlayLabel $f $Detail $x ([int]($H * 0.79)) $cw ([int]($H * 0.08)) (New-GGFont $textFont $small $false) $soft)
-            $c = Add-OverlayLabel $f '' $x ([int]($H * 0.95 - $rowH)) $cw $rowH (New-GGFont $mono $small $false) $soft
-            [void]$footers.Add($c)
             [void]$forms.Add($f)
             $f.Show()
         }
         if ($forms.Count -eq 0) { throw 'Kein Bildschirm gefunden' }
-        $forms[0].Activate()
+        $handles = [IntPtr[]]@($forms | ForEach-Object { $_.Handle })
+        [GGLockGuard]::Front($handles[0])
+        if (-not [GGLockGuard]::Engage()) { Write-LogOnce 'HINWEIS: Tastensperre (Windows-Taste, Alt+Tab) nicht verfügbar.' }
         [System.Windows.Forms.Application]::DoEvents()
         $visible = 0
         foreach ($f in $forms) { if ($f.Visible) { $visible++ } }
@@ -990,6 +942,7 @@ function Show-Warning([int]$Seconds, [string]$Head, [string]$Quote, [string]$Det
         $spoken = $false
         $shown = -1
         $opaque = -not $fade
+        $front = 0
         while ($true) {
             $nowUtc = [DateTime]::UtcNow
             $left = [int][math]::Ceiling(($end - $nowUtc).TotalSeconds)
@@ -1002,19 +955,20 @@ function Show-Warning([int]$Seconds, [string]$Head, [string]$Quote, [string]$Det
                 foreach ($f in $forms) { $f.Opacity = $o }
                 if ($o -ge 1.0) { $opaque = $true }
             }
+            $progress = [single][math]::Max(0, ($end - $nowUtc).TotalMilliseconds / $total)
+            foreach ($f in $forms) { $f.Poster.SetTime($progress, $left) }
             if ($left -ne $shown) {
                 $shown = $left
-                foreach ($n in $numbers) { $n.Text = [string]$left }
-                foreach ($c in $footers) { $c.Text = ('Bildschirm gesperrt – noch {0} s' -f $left) }
-                foreach ($f in $forms) { $f.TopMost = $true; $f.BringToFront() }
+                foreach ($f in $forms) { $f.TopMost = $true }
             }
-            foreach ($r in $rings) {
-                $r.Progress = [single][math]::Max(0, ($end - $nowUtc).TotalMilliseconds / $total)
-                $r.Invalidate()
+            if ($elapsed -ge $front) {
+                # vorne bleiben – auch wenn sich ein anderes Fenster dazwischendrängt
+                $front = $elapsed + 400
+                if (-not [GGLockGuard]::IsFront($handles)) { [GGLockGuard]::Front($handles[0]) }
             }
             if (-not $spoken -and $elapsed -ge $delay) {
                 $spoken = $true
-                Start-Speech ('{0} {1}' -f $Speak, $Quote)
+                Start-Speech ('{0} {1}' -f $Speak, $Content.Quote)
             }
             [System.Windows.Forms.Application]::DoEvents()
             Start-Sleep -Milliseconds 33
@@ -1023,15 +977,17 @@ function Show-Warning([int]$Seconds, [string]$Head, [string]$Quote, [string]$Det
         Write-Log ('FEHLER: Vollbild-Warnung konnte nicht angezeigt werden ({0}) – nehme das Dialogfenster.' -f $_.Exception.Message)
         $mode = 'dialog'
     } finally {
-        $script:OverlayDone = $true
+        if ('GGLockGuard' -as [type]) { [GGLockGuard]::Release() }
+        if ('GGLockWindow' -as [type]) { [GGLockWindow]::Done = $true }
         foreach ($f in $forms) {
+            try { [GGLockGuard]::MarkFullscreen($f.Handle, $false) } catch { }
             try { $f.Close(); $f.Dispose() } catch { }
         }
     }
     if ($mode -eq 'dialog') {
         Start-AlarmSound
-        Start-Speech ('{0} {1}' -f $Speak, $Quote)
-        Show-FallbackPopup $Seconds $Head $Quote $Detail
+        Start-Speech ('{0} {1}' -f $Speak, $Content.Quote)
+        Show-FallbackPopup $Seconds $Content.Head $Content.Quote $Content.Detail
     }
     return $mode
 }
@@ -1072,20 +1028,20 @@ function Get-WarnTexts([int]$N, [string]$Name, [bool]$Closed, [int]$Hunt = 0) {
     if ($Closed) { $what = '{0} wurde geschlossen.' -f $Name } else { $what = '{0} ist noch offen. Schliess es. Jetzt.' -f $Name }
     if ($Hunt -ge 3) {
         if ($script:S.Ton -eq 'ruhig') {
-            return @{ Head = 'DU SUCHST GERADE EINEN UMWEG.'; Speak = 'Du suchst gerade einen Umweg.'; Detail = ('{0} Das war der {1}. Versuch in zehn Minuten. Steh kurz auf, dann zurück an die Aufgabe.' -f $what, $Hunt) }
+            return @{ Head = 'Du suchst gerade einen Umweg.'; Speak = 'Du suchst gerade einen Umweg.'; Detail = ('{0} Das war der {1}. Versuch in zehn Minuten. Steh kurz auf, dann zurück an die Aufgabe.' -f $what, $Hunt) }
         }
-        return @{ Head = 'JAGD ERKANNT.'; Speak = 'Jagd erkannt.'; Detail = ('{0} Das ist der {1}. Umweg in zehn Minuten. Die Sperre steht jetzt auf dem Maximum.' -f $what, $Hunt) }
+        return @{ Head = 'Jagd erkannt.'; Speak = 'Jagd erkannt.'; Detail = ('{0} Das ist der {1}. Umweg in zehn Minuten. Die Sperre steht jetzt auf dem Maximum.' -f $what, $Hunt) }
     }
-    if ($script:S.Ton -eq 'ruhig') { return @{ Head = 'KURZ ZURÜCK.'; Speak = 'Kurz zurück.'; Detail = "$what Kein Drama. Zurück zur Aufgabe." } }
-    if ($script:S.Ton -eq 'direkt') { return @{ Head = 'ABLENKUNG GESPERRT.'; Speak = 'Ablenkung gesperrt.'; Detail = ('{0} Ausrutscher Nr. {1} heute.' -f $what, $N) } }
+    if ($script:S.Ton -eq 'ruhig') { return @{ Head = 'Kurz zurück.'; Speak = 'Kurz zurück.'; Detail = "$what Kein Drama. Zurück zur Aufgabe." } }
+    if ($script:S.Ton -eq 'direkt') { return @{ Head = 'Ablenkung gesperrt.'; Speak = 'Ablenkung gesperrt.'; Detail = ('{0} Ausrutscher Nr. {1} heute.' -f $what, $N) } }
     switch ($N) {
-        1 { return @{ Head = 'STOPP.'; Speak = 'Stopp.'; Detail = "$what Erster Ausrutscher heute – sorg dafür, dass es der letzte bleibt." } }
-        2 { return @{ Head = 'SCHON WIEDER.'; Speak = 'Schon wieder.'; Detail = "$what Zweiter Ausrutscher heute." } }
+        1 { return @{ Head = 'Stopp.'; Speak = 'Stopp.'; Detail = "$what Erster Ausrutscher heute – sorg dafür, dass es der letzte bleibt." } }
+        2 { return @{ Head = 'Schon wieder.'; Speak = 'Schon wieder.'; Detail = "$what Zweiter Ausrutscher heute." } }
         { $_ -eq 3 -or $_ -eq 4 } {
-            return @{ Head = ('NR. {0} HEUTE.' -f $N); Speak = ('Ausrutscher Nummer {0} heute.' -f $N); Detail = "$what Das wird gerade zur Gewohnheit." }
+            return @{ Head = ('Nr. {0} heute.' -f $N); Speak = ('Ausrutscher Nummer {0} heute.' -f $N); Detail = "$what Das wird gerade zur Gewohnheit." }
         }
         default {
-            return @{ Head = ('NR. {0} HEUTE.' -f $N); Speak = ('Ausrutscher Nummer {0} heute.' -f $N); Detail = "$what Das ist kein Ausrutscher mehr. Das ist ein Muster – und nur du kannst es brechen." }
+            return @{ Head = ('Nr. {0} heute.' -f $N); Speak = ('Ausrutscher Nummer {0} heute.' -f $N); Detail = "$what Das ist kein Ausrutscher mehr. Das ist ein Muster – und nur du kannst es brechen." }
         }
     }
 }
@@ -1111,14 +1067,15 @@ function Invoke-Punish([string]$Kind, [string]$Name, [bool]$Closed) {
     }
     $t = Get-WarnTexts $n $clean $Closed $hunt
     $quote = Get-Quote $n
-    $label = 'AUSRUTSCHER {0:00} · {1} S' -f $n, $secs
+    $label = 'Ausrutscher {0:00} · {1} s' -f $n, $secs
     if ($hunt -gt 0) {
-        $label += ' · JAGD'
+        $label += ' · Jagd'
         Write-Log ('Ausrutscher Nr. {0} heute: {1} – Jagd erkannt ({2} in 10 Minuten), Bildschirm {3} s gesperrt' -f $n, $clean, $hunt, $secs)
     } else {
         Write-Log ('Ausrutscher Nr. {0} heute: {1} – Bildschirm {2} s gesperrt' -f $n, $clean, $secs)
     }
-    [void](Show-Warning $secs $t.Head $quote $t.Detail $t.Speak $label)
+    $content = New-LockContent (Get-Plate $n $hunt) $t.Head $quote $t.Detail $label $n $hunt
+    [void](Show-Warning $secs $content $t.Speak)
     Invoke-GoBack
 }
 
@@ -1415,50 +1372,243 @@ function Invoke-Check {
 
 $script:Tray = $null
 $script:TrayText = ''
+$script:TrayState = ''
+$script:TrayIcons = @{}
+$script:MenuHeader = $null
+$script:PendingTest = $null
+$script:SeenConfig = 0
+
+function Get-GuardState {
+    # 'fokus', 'pause' oder 'aktiv'
+    $now = Get-Now
+    $fe = Get-FocusEnd
+    if ($fe -and $now -lt $fe) { return 'fokus' }
+    $pe = Get-PauseEnd
+    if ($pe -and $now -lt $pe) { return 'pause' }
+    return 'aktiv'
+}
+
+function Open-Settings([string]$Page) {
+    if (-not (Initialize-Ui)) {
+        Send-Notice 'GrindGuard' 'Die Einstellungen lassen sich hier nicht öffnen – ich öffne den Ordner mit den Listen.'
+        try { Start-Process -FilePath 'explorer.exe' -ArgumentList ('"{0}"' -f $script:ConfDir) } catch { }
+        return
+    }
+    try {
+        [GGSettings]::OpenAsync($script:Base, $script:Version, $script:UpdateRepo, [string[]]$script:Protected, $Page)
+    } catch {
+        Write-LogOnce ('FEHLER: Einstellungen: {0}' -f $_.Exception.Message)
+    }
+}
+
+function Set-Pause([int]$Minutes) {
+    # gibt eine Meldung zurück; wird vom Befehl "pause", vom Menü und von den Einstellungen benutzt
+    $fe = Get-FocusEnd
+    if ($fe -and (Get-Now) -lt $fe) { return ('Fokus-Sitzung läuft bis {0} Uhr – keine Pause.' -f (Format-Clock $fe)) }
+    if ($Minutes -lt 1) { $Minutes = 1 }
+    if ($Minutes -gt 120) { $Minutes = 120 }
+    if (-not (Test-Path -LiteralPath $script:StateDir)) { [void](New-Item -ItemType Directory -Path $script:StateDir -Force) }
+    $end = (Get-Now) + $Minutes * 60
+    [System.IO.File]::WriteAllText($script:PauseFile, [string]$end, $script:Utf8)
+    Write-Log ('Pause: {0} Minuten, bis {1} Uhr' -f $Minutes, (Format-Clock $end))
+    return ('Pause: {0} Minuten, bis {1} Uhr. Danach ist der Wächter automatisch wieder scharf.' -f $Minutes, (Format-Clock $end))
+}
+
+function Invoke-TrayFocus([int]$Minutes) {
+    # läuft schon eine Sitzung, verlängert der Klick um so viele Minuten
+    $fe = Get-FocusEnd
+    $now = Get-Now
+    if ($fe -and $now -lt $fe) { $Minutes = [int][math]::Ceiling(($fe - $now) / 60) + $Minutes }
+    Send-Notice 'GrindGuard' (Start-FocusSession $Minutes)
+    Update-Tray
+}
+
+function Invoke-TestLock([string]$Plate) {
+    Import-All
+    if ($script:PlateNames -notcontains $Plate) { $Plate = Get-Plate 1 0 }
+    $content = New-LockContent $Plate 'Testalarm.' (Get-Quote 1) 'So sieht es aus, wenn du erwischt wirst. Das hier ist nur ein Test.' 'Test · 6 s' 1 0
+    return (Show-Warning 6 $content 'Testalarm.')
+}
+
+function Invoke-UiRequest([string]$Request) {
+    # Wünsche aus dem Einstellungsfenster (läuft im eigenen Thread) hier im Wächter ausführen
+    $parts = $Request.Split(':')
+    $arg = ''
+    if ($parts.Count -gt 1) { $arg = $parts[1] }
+    switch ($parts[0]) {
+        'test'   { [void](Invoke-TestLock $arg) }
+        'fokus'  { if ($arg -match '^[0-9]{1,3}$') { Send-Notice 'GrindGuard' (Start-FocusSession ([int]$arg)) } }
+        'pause'  { if ($arg -match '^[0-9]{1,3}$') { Send-Notice 'GrindGuard' (Set-Pause ([int]$arg)) } }
+        'weiter' { Remove-Item -LiteralPath $script:PauseFile -Force -ErrorAction SilentlyContinue; Write-Log 'Pause beendet' }
+    }
+    Update-Tray
+}
+
+function New-TrayItem($Parent, [string]$Text, [scriptblock]$Action) {
+    $it = New-Object System.Windows.Forms.ToolStripMenuItem $Text
+    if ($Action) { $it.Add_Click($Action) }
+    if ($Parent -is [System.Windows.Forms.ToolStripMenuItem]) { [void]$Parent.DropDownItems.Add($it) } else { [void]$Parent.Items.Add($it) }
+    return $it
+}
+
+function Add-TraySeparator($Parent) {
+    $sep = New-Object System.Windows.Forms.ToolStripSeparator
+    if ($Parent -is [System.Windows.Forms.ToolStripMenuItem]) { [void]$Parent.DropDownItems.Add($sep) } else { [void]$Parent.Items.Add($sep) }
+}
 
 function New-Tray {
     try {
+        $ui = Initialize-Ui
         $t = New-Object System.Windows.Forms.NotifyIcon
-        $t.Icon = [System.Drawing.SystemIcons]::Shield
+        if ($ui) {
+            $size = [System.Windows.Forms.SystemInformation]::SmallIconSize.Width
+            foreach ($st in @('aktiv', 'pause', 'fokus')) { $script:TrayIcons[$st] = [GGBrand]::TrayIcon($size, $st) }
+            $t.Icon = $script:TrayIcons['aktiv']
+        } else {
+            $t.Icon = [System.Drawing.SystemIcons]::Application
+        }
         $t.Text = 'GrindGuard – aktiv'
         $menu = New-Object System.Windows.Forms.ContextMenuStrip
-        [void]$menu.Items.Add('Status und Statistik', $null, {
-            Start-Process -FilePath $env:ComSpec -ArgumentList ('/k call "{0}" status & call "{0}" stats' -f $script:GrindCmd)
-        })
-        [void]$menu.Items.Add('Listen bearbeiten', $null, {
-            Start-Process -FilePath 'explorer.exe' -ArgumentList ('"{0}"' -f $script:ConfDir)
-        })
-        [void]$menu.Items.Add('-')
-        foreach ($m in @(25, 50, 90)) {
-            $item = $menu.Items.Add(('Fokus-Sitzung {0} Minuten' -f $m))
-            $item.Tag = $m
-            $item.Add_Click({
-                param($itemSender, $clickArgs)
-                $r = Start-FocusSession ([int]$itemSender.Tag)
-                Send-Notice 'GrindGuard' $r
-            })
+        if ($ui) {
+            $script:MenuTheme = [GGMenuTheme]::Current()
+            $script:MenuHeader = New-Object GGMenuHeader -ArgumentList $script:MenuTheme
+            [void]$menu.Items.Add($script:MenuHeader)
+            Add-TraySeparator $menu
         }
+        $script:MenuFocus = New-TrayItem $menu 'Fokus-Sitzung' $null
+        foreach ($m in @(25, 50, 90)) {
+            $it = New-TrayItem $script:MenuFocus ('{0} Minuten' -f $m) { param($itemSender, $clickArgs) Invoke-TrayFocus ([int]$itemSender.Tag) }
+            $it.Tag = $m
+        }
+        $script:MenuPause = New-TrayItem $menu 'Pause' $null
+        $script:MenuPauseItems = @()
+        foreach ($m in @(10, 20, 30)) {
+            $it = New-TrayItem $script:MenuPause ('{0} Minuten' -f $m) { param($itemSender, $clickArgs) Send-Notice 'GrindGuard' (Set-Pause ([int]$itemSender.Tag)); Update-Tray }
+            $it.Tag = $m
+            $script:MenuPauseItems += $it
+        }
+        $script:MenuBlock = New-TrayItem $menu 'Sperren' $null
+        if (-not $ui) { $script:MenuBlock.Visible = $false }
+        $script:MenuResume = New-TrayItem $script:MenuPause 'Pause beenden' {
+            Remove-Item -LiteralPath $script:PauseFile -Force -ErrorAction SilentlyContinue
+            Write-Log 'Pause beendet'
+            Send-Notice 'GrindGuard' 'Pause beendet. Der Wächter ist wieder scharf.'
+            Update-Tray
+        }
+        Add-TraySeparator $menu
+        [void](New-TrayItem $menu 'Einstellungen …' { Open-Settings 'Heute' })
+        [void](New-TrayItem $menu 'Was ist gesperrt?' { Open-Settings 'Sperren' })
+        [void](New-TrayItem $menu 'Sperre testen' { $script:PendingTest = 'auto' })
+        Add-TraySeparator $menu
+        $more = New-TrayItem $menu 'Mehr' $null
+        [void](New-TrayItem $more 'Nach Updates suchen …' { Open-Settings 'Update' })
+        [void](New-TrayItem $more 'Ordner mit den Listen' { try { Start-Process -FilePath 'explorer.exe' -ArgumentList ('"{0}"' -f $script:ConfDir) } catch { } })
+        [void](New-TrayItem $more 'Protokoll' { try { Start-Process -FilePath 'notepad.exe' -ArgumentList ('"{0}"' -f $script:LogFile) } catch { } })
+        Add-TraySeparator $more
+        $script:MenuStop = New-TrayItem $more 'Wächter anhalten (bis zur nächsten Anmeldung)' {
+            if ((Get-GuardState) -eq 'fokus') { Send-Notice 'GrindGuard' 'Während der Fokus-Sitzung geht das nicht.'; return }
+            Write-Log 'Angehalten (über das Menü)'
+            try { [System.IO.File]::WriteAllText($script:StopFile, 'stop', $script:Utf8) } catch { }
+        }
+        $script:MenuUninstall = New-TrayItem $more 'GrindGuard deinstallieren …' {
+            if ((Get-GuardState) -eq 'fokus') { Send-Notice 'GrindGuard' 'Während der Fokus-Sitzung geht das nicht.'; return }
+            Start-Process -FilePath $script:PsExe -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" deinstallieren' -f $script:SelfPath) -WindowStyle Hidden -WorkingDirectory $env:TEMP
+        }
+        $script:MenuUninstall.Tag = 'gefahr'
+        if ($ui) { [GGTray]::Style($menu, $script:MenuTheme) }
+        $menu.Add_Opening({ Update-TrayMenu })
         $t.ContextMenuStrip = $menu
+        # Linksklick öffnet das Menü ebenfalls
+        $t.Add_MouseUp({
+            param($iconSender, $mouseArgs)
+            if ($mouseArgs.Button -eq [System.Windows.Forms.MouseButtons]::Left -and $script:UiReady) { [GGTray]::ShowMenu($iconSender) }
+        })
         $t.Visible = $true
         $script:Tray = $t
+        $script:TrayMenu = $menu
         $script:TrayText = $t.Text
+        $script:TrayState = 'aktiv'
     } catch {
+        Write-LogOnce ('FEHLER: Symbol in der Taskleiste: {0}' -f $_.Exception.Message)
         $script:Tray = $null
     }
 }
 
+function Update-BlockMenu([bool]$Focus) {
+    # Untermenü "Sperren": jeder Abschnitt der Listen mit einem Schalter
+    if (-not $script:UiReady -or -not $script:MenuBlock) { return }
+    $dd = $script:MenuBlock.DropDown
+    foreach ($old in @($dd.Items)) { if ($old.Image) { $old.Image.Dispose() } }
+    $dd.Items.Clear()
+    foreach ($line in [GGQuick]::Sections($script:ConfDir)) {
+        $p = $line.Split('|')
+        if ($p.Count -lt 4) { continue }
+        $on = [int]$p[2]
+        $total = [int]$p[3]
+        $state = 2
+        if ($on -eq 0) { $state = 0 } elseif ($on -lt $total) { $state = 1 }
+        $it = [GGQuick]::Item($p[1], $state, $script:MenuTheme)
+        $it.Tag = '{0}|{1}|{2}' -f $p[0], $p[1], [int]($on -lt $total)
+        $it.Enabled = -not $Focus
+        $it.Add_Click({
+            param($itemSender, $clickArgs)
+            $q = ([string]$itemSender.Tag).Split('|')
+            try {
+                [GGQuick]::SetSection($script:ConfDir, $q[0], $q[1], ($q[2] -eq '1'))
+                if ($q[2] -eq '1') { Send-Notice 'GrindGuard' ('{0}: wird gesperrt.' -f $q[1]) } else { Send-Notice 'GrindGuard' ('{0}: bleibt offen.' -f $q[1]) }
+            } catch {
+                Send-Notice 'GrindGuard' ('Nicht gespeichert: {0}' -f $_.Exception.Message)
+            }
+        })
+        [void]$dd.Items.Add($it)
+    }
+    [void]$dd.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+    $all = New-Object System.Windows.Forms.ToolStripMenuItem 'Einzeln einstellen …'
+    $all.Add_Click({ Open-Settings 'Sperren' })
+    [void]$dd.Items.Add($all)
+    [GGTray]::Style($dd, $script:MenuTheme)
+    [GGQuick]::Prepare($dd, $script:MenuTheme)
+    if ($Focus) { $script:MenuBlock.Text = 'Sperren (eingefroren)' } else { $script:MenuBlock.Text = 'Sperren' }
+}
+
+function Update-TrayMenu {
+    try {
+        $state = Get-GuardState
+        $n = Get-TodayCount
+        $focus = ($state -eq 'fokus')
+        if ($script:MenuHeader) {
+            $script:MenuHeader.State = $state
+            switch ($state) {
+                'fokus' { $script:MenuHeader.Status = ('Fokus bis {0} Uhr · heute {1}× abgelenkt' -f (Format-Clock (Get-FocusEnd)), $n) }
+                'pause' { $script:MenuHeader.Status = ('Pause bis {0} Uhr' -f (Format-Clock (Get-PauseEnd))) }
+                default { $script:MenuHeader.Status = ('Aktiv · heute {0} Ausrutscher' -f $n) }
+            }
+            $script:MenuHeader.Invalidate()
+        }
+        foreach ($it in $script:MenuFocus.DropDownItems) {
+            if ($focus) { $it.Text = ('+{0} Minuten verlängern' -f $it.Tag) } else { $it.Text = ('{0} Minuten' -f $it.Tag) }
+        }
+        if ($focus) { $script:MenuFocus.Text = ('Fokus-Sitzung (bis {0} Uhr)' -f (Format-Clock (Get-FocusEnd))) } else { $script:MenuFocus.Text = 'Fokus-Sitzung' }
+        Update-BlockMenu $focus
+        $script:MenuPause.Enabled = -not $focus
+        foreach ($it in $script:MenuPauseItems) { $it.Visible = ($state -ne 'pause') }
+        $script:MenuResume.Visible = ($state -eq 'pause')
+        $script:MenuStop.Enabled = -not $focus
+        $script:MenuUninstall.Enabled = -not $focus
+    } catch { }
+}
+
 function Update-Tray {
     if (-not $script:Tray) { return }
+    $state = Get-GuardState
     $text = 'GrindGuard – aktiv'
-    $p = Get-PauseEnd
-    $fe = Get-FocusEnd
-    if ($fe -and (Get-Now) -lt $fe) {
-        $text = 'GrindGuard – Fokus bis {0}' -f (Format-Clock $fe)
-    } elseif ($p -and (Get-Now) -lt $p) {
-        $text = 'GrindGuard – Pause bis {0}' -f (Format-Clock $p)
-    }
+    if ($state -eq 'fokus') { $text = 'GrindGuard – Fokus bis {0}' -f (Format-Clock (Get-FocusEnd)) }
+    if ($state -eq 'pause') { $text = 'GrindGuard – Pause bis {0}' -f (Format-Clock (Get-PauseEnd)) }
     if ($text -ne $script:TrayText) {
         try { $script:Tray.Text = $text; $script:TrayText = $text } catch { }
+    }
+    if ($state -ne $script:TrayState -and $script:TrayIcons[$state]) {
+        try { $script:Tray.Icon = $script:TrayIcons[$state]; $script:TrayState = $state } catch { }
     }
 }
 
@@ -1469,6 +1619,25 @@ function Remove-Tray {
     }
 }
 
+function Invoke-UiTick {
+    # kurze Aufgaben zwischen den Prüfungen: Wünsche aus dem Menü und dem Einstellungsfenster
+    if ($script:PendingTest) {
+        $p = $script:PendingTest
+        $script:PendingTest = $null
+        [void](Invoke-TestLock $p)
+    }
+    if ($script:UiReady) {
+        $req = [GGSettings]::TakeRequest()
+        if ($req) { Invoke-UiRequest $req }
+        if ([GGSettings]::ConfigVersion -ne $script:SeenConfig) {
+            $script:SeenConfig = [GGSettings]::ConfigVersion
+            Import-All                      # Änderungen aus den Einstellungen sofort übernehmen
+            $script:PrevKey = ''
+            $script:LastUrlOk = ''
+        }
+    }
+}
+
 function Start-Daemon {
     if (-not (Initialize-Native)) {
         Write-Log ('FEHLER: Windows-Funktionen nicht verfügbar ({0}). Prüfen: grind doctor' -f $script:NativeError)
@@ -1476,6 +1645,7 @@ function Start-Daemon {
     }
     Initialize-Gui
     [void](Initialize-Uia)
+    [void](Initialize-Ui)
     if (-not (Test-Path -LiteralPath $script:StateDir)) {
         [void](New-Item -ItemType Directory -Path $script:StateDir -Force)
     }
@@ -1509,16 +1679,31 @@ function Start-Daemon {
                 Write-Log 'Angehalten (grind stop)'
                 break
             }
-            try {
-                Invoke-Check
-            } catch {
-                Write-LogOnce ('FEHLER: {0}' -f $_.Exception.Message)
+            $menuOpen = ($script:TrayMenu -and $script:TrayMenu.Visible)
+            if (-not $menuOpen) {
+                try {
+                    Invoke-Check
+                } catch {
+                    Write-LogOnce ('FEHLER: {0}' -f $_.Exception.Message)
+                }
             }
             Update-Tray
+            if (Test-Path -LiteralPath $script:OpenFlag) {
+                $page = ''
+                try { $page = ([System.IO.File]::ReadAllText($script:OpenFlag)).Trim() } catch { }
+                Remove-Item -LiteralPath $script:OpenFlag -Force -ErrorAction SilentlyContinue
+                Open-Settings $page
+            }
             $slices = [math]::Max(1, [int]($script:S.IntervallMs / 50))
             for ($i = 0; $i -lt $slices; $i++) {
                 [System.Windows.Forms.Application]::DoEvents()
-                Start-Sleep -Milliseconds 50
+                try { Invoke-UiTick } catch { Write-LogOnce ('FEHLER: {0}' -f $_.Exception.Message) }
+                if ($script:TrayMenu -and $script:TrayMenu.Visible) {
+                    # Menü offen: öfter Nachrichten abholen, damit es flüssig reagiert
+                    for ($j = 0; $j -lt 4; $j++) { Start-Sleep -Milliseconds 12; [System.Windows.Forms.Application]::DoEvents() }
+                } else {
+                    Start-Sleep -Milliseconds 50
+                }
             }
         }
     } finally {
@@ -1632,14 +1817,234 @@ function Invoke-Stop {
     Write-Output 'Dauerhaft entfernen: ~\GrindGuard\grind uninstall'
 }
 
-function Invoke-Uninstall {
-    Assert-NoFocus 'uninstall'
+function Test-InstallDir {
+    # Nur den echten Installationsordner löschen – nie ein entpacktes Paket oder eine Kopie
+    $instDir = Join-Path $env:USERPROFILE 'GrindGuard'
+    return ([string]::Equals($script:Base.TrimEnd('\'), $instDir.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase) -and
+        (Test-Path -LiteralPath (Join-Path $script:Base 'grindguard.ps1')))
+}
+
+function Remove-GrindGuard([bool]$DeleteFolder) {
     Stop-Daemon
     Remove-ItemProperty -Path $script:RunKey -Name $script:RunName -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $script:PauseFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $script:UninstallKey -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Get-StartLink) -Force -ErrorAction SilentlyContinue
+    Write-Log 'GrindGuard entfernt'
+    if ($DeleteFolder -and (Test-InstallDir)) {
+        # Ein kleiner Helfer löscht den Ordner, sobald dieses Fenster zu ist
+        $cmd = '/c ping -n 3 127.0.0.1 >nul & rd /s /q "{0}"' -f $script:Base
+        Start-Process -FilePath $env:ComSpec -ArgumentList $cmd -WindowStyle Hidden -WorkingDirectory $env:TEMP
+        return $true
+    }
+    return $false
+}
+
+function Invoke-Uninstall {
+    Assert-NoFocus 'uninstall'
+    [void](Remove-GrindGuard $false)
     Write-Output 'GrindGuard ist entfernt und startet nicht mehr automatisch.'
     Write-Output ('Der Ordner {0} (deine Listen und die Statistik) liegt noch da –' -f $script:Base)
     Write-Output 'wenn du ihn nicht mehr brauchst, lösch ihn.'
+}
+
+function Invoke-UninstallGui {
+    # Deinstallieren mit Fenster: aus "Einstellungen > Apps", DEINSTALLIEREN.cmd und dem Menü
+    try { Set-Location -LiteralPath $env:TEMP } catch { }
+    $ui = Initialize-Ui
+    $fe = Get-FocusEnd
+    if ($fe -and (Get-Now) -lt $fe) {
+        $msg = ('Deine Fokus-Sitzung läuft bis {0} Uhr. Danach kannst du GrindGuard entfernen. Notausstieg (10 Minuten Wartezeit): ~\GrindGuard\grind notausstieg' -f (Format-Clock $fe))
+        if ($ui) { [GGDialog]::Info('Nicht während der Fokus-Sitzung.', $msg) } else { Show-FallbackPopup 60 'GrindGuard' $msg '' }
+        exit 1
+    }
+    $all = $false
+    if ($ui) {
+        $ok = [GGDialog]::Ask('GrindGuard entfernen?',
+            'Der Wächter hört sofort auf und startet nicht mehr mit Windows. Der Eintrag unter „Apps“ und im Startmenü verschwindet.',
+            'Entfernen', 'Abbrechen', 'Auch meine Listen, Sprüche und Statistik löschen', $true, [ref]$all)
+        if (-not $ok) { return }
+    } else {
+        $shell = New-Object -ComObject WScript.Shell
+        if ($shell.Popup('GrindGuard entfernen?', 0, 'GrindGuard', 0x4 + 0x20 + 0x1000) -ne 6) { return }
+    }
+    $gone = Remove-GrindGuard $all
+    if ($gone) { $text = 'Der Wächter ist aus und dein GrindGuard-Ordner wird gelöscht. Viel Erfolg – du schaffst das auch ohne.' }
+    else { $text = ('Der Wächter ist aus und startet nicht mehr. Deine Listen liegen noch in {0}.' -f $script:Base) }
+    if ($ui) { [GGDialog]::Info('GrindGuard ist entfernt.', $text) } else { Show-FallbackPopup 30 'GrindGuard ist entfernt.' $text '' }
+}
+
+function Get-StartLink {
+    return (Join-Path ([Environment]::GetFolderPath('Programs')) 'GrindGuard.lnk')
+}
+
+function Invoke-Register {
+    # Eintrag unter "Einstellungen > Apps", Startmenü und Symbol – ruft der Installer auf
+    $icon = $script:PsExe + ',0'
+    if (Initialize-Ui) {
+        try {
+            [GGBrand]::SaveIco($script:IconFile)
+            $icon = $script:IconFile
+        } catch {
+            Write-Output ('  Symbol: {0}' -f $_.Exception.Message)
+        }
+    }
+    try {
+        $k = $script:UninstallKey
+        if (-not (Test-Path -Path $k)) { [void](New-Item -Path $k -Force) }
+        $kb = 0
+        try { $kb = [int](((Get-ChildItem -LiteralPath $script:Base -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum) / 1024) } catch { }
+        $uninstall = '"{0}" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{1}" deinstallieren' -f $script:PsExe, $script:SelfPath
+        $values = [ordered]@{
+            DisplayName = 'GrindGuard'
+            DisplayVersion = $script:Version
+            Publisher = 'GrindGuard'
+            DisplayIcon = $icon
+            InstallLocation = $script:Base
+            UninstallString = $uninstall
+            URLInfoAbout = ('https://github.com/{0}' -f $script:UpdateRepo)
+            HelpLink = ('https://github.com/{0}' -f $script:UpdateRepo)
+            InstallDate = (Get-Date).ToString('yyyyMMdd', $script:Inv)
+        }
+        foreach ($name in $values.Keys) { [void](New-ItemProperty -Path $k -Name $name -Value $values[$name] -PropertyType String -Force) }
+        foreach ($name in @('NoModify', 'NoRepair')) { [void](New-ItemProperty -Path $k -Name $name -Value 1 -PropertyType DWord -Force) }
+        [void](New-ItemProperty -Path $k -Name 'EstimatedSize' -Value $kb -PropertyType DWord -Force)
+        Write-Output '  Eintrag unter Einstellungen > Apps: ok'
+    } catch {
+        Write-Output ('  Eintrag unter Einstellungen > Apps fehlt: {0}' -f $_.Exception.Message)
+    }
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $lnk = $shell.CreateShortcut((Get-StartLink))
+        $lnk.TargetPath = $script:PsExe
+        $lnk.Arguments = ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" einstellungen' -f $script:SelfPath)
+        $lnk.WorkingDirectory = $env:USERPROFILE
+        $lnk.IconLocation = $icon
+        $lnk.Description = 'GrindGuard – Einstellungen'
+        $lnk.WindowStyle = 7
+        $lnk.Save()
+        Write-Output '  Startmenü: „GrindGuard“ öffnet die Einstellungen'
+    } catch {
+        Write-Output ('  Startmenü-Eintrag fehlt: {0}' -f $_.Exception.Message)
+    }
+}
+
+function Invoke-Settings([string]$Page) {
+    $p = Get-DaemonProcess
+    if ($p) {
+        # Der Wächter hat die Oberfläche schon geladen und öffnet das Fenster sofort
+        if (-not (Test-Path -LiteralPath $script:StateDir)) { [void](New-Item -ItemType Directory -Path $script:StateDir -Force) }
+        if (Initialize-Native) { try { [void][GGNative]::AllowSetForegroundWindow($p.Id) } catch { } }
+        try { [System.IO.File]::WriteAllText($script:OpenFlag, $Page, $script:Utf8) } catch { }
+        Write-Output 'Die Einstellungen öffnen sich …'
+        return
+    }
+    if (-not (Initialize-Ui)) {
+        Write-Output ('Die Einstellungen lassen sich nicht öffnen ({0}). Listen bearbeiten: ~\GrindGuard\grind edit' -f $script:UiError)
+        exit 1
+    }
+    [GGSettings]::ShowModal($script:Base, $script:Version, $script:UpdateRepo, [string[]]$script:Protected, $Page)
+}
+
+function Test-NewerVersion([string]$Candidate, [string]$Current) {
+    try {
+        $a = [version](($Candidate.TrimStart('v')) + $(if ($Candidate -notmatch '\.') { '.0' } else { '' }))
+        $b = [version](($Current.TrimStart('v')) + $(if ($Current -notmatch '\.') { '.0' } else { '' }))
+        return ($a -gt $b)
+    } catch {
+        return $false
+    }
+}
+
+function Wait-Window([bool]$Window) {
+    if ($Window) {
+        Write-Output ''
+        Write-Output 'Enter drücken zum Schliessen …'
+        try { [void][Console]::ReadLine() } catch { }
+    }
+}
+
+function Invoke-Update([string]$Mode) {
+    # Neueste Version von GitHub holen, Prüfsumme kontrollieren, Installer starten.
+    # Nur auf ausdrücklichen Wunsch – GrindGuard prüft nie von selbst.
+    $window = ($Mode -eq 'fenster')
+    Write-Output ('GrindGuard {0} – suche nach Updates …' -f $script:Version)
+    $fe = Get-FocusEnd
+    if ($fe -and (Get-Now) -lt $fe) {
+        Write-Output ('Fokus-Sitzung läuft bis {0} Uhr – das Update gibt es danach.' -f (Format-Clock $fe))
+        Wait-Window $window
+        exit 1
+    }
+    $ProgressPreference = 'SilentlyContinue'
+    try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
+    $headers = @{ 'User-Agent' = 'GrindGuard'; 'Accept' = 'application/vnd.github+json' }
+    try {
+        $rel = Invoke-RestMethod -Uri ('https://api.github.com/repos/{0}/releases/latest' -f $script:UpdateRepo) -Headers $headers -UseBasicParsing -TimeoutSec 20 -ErrorAction Stop
+    } catch {
+        Write-Output ('Keine Verbindung zu GitHub: {0}' -f $_.Exception.Message)
+        Wait-Window $window
+        exit 1
+    }
+    $latest = ([string]$rel.tag_name).TrimStart('v')
+    if (-not (Test-NewerVersion $latest $script:Version)) {
+        Write-Output ('Du hast die neueste Version ({0}).' -f $script:Version)
+        Wait-Window $window
+        return
+    }
+    Write-Output ('Neue Version: {0}' -f $latest)
+    $zip = @($rel.assets | Where-Object { $_.name -eq 'GrindGuard-Windows.zip' })[0]
+    $sums = @($rel.assets | Where-Object { $_.name -eq 'SHA256SUMS.txt' })[0]
+    if (-not $zip -or -not $sums) {
+        Write-Output 'In diesem Release fehlt das Windows-Paket. Bitte von Hand herunterladen:'
+        Write-Output ('  https://github.com/{0}/releases/latest' -f $script:UpdateRepo)
+        Wait-Window $window
+        exit 1
+    }
+    foreach ($a in @($zip, $sums)) {
+        # nur echte GitHub-Release-Downloads (der Name des Repos darf sich ändern, GitHub leitet um)
+        if ([string]$a.browser_download_url -notlike 'https://github.com/*/releases/download/*') {
+            Write-Output ('Unerwartete Download-Adresse: {0}' -f $a.browser_download_url)
+            Wait-Window $window
+            exit 1
+        }
+    }
+    $tmp = Join-Path $env:TEMP ('GrindGuard-Update-{0}-{1}' -f $latest, [guid]::NewGuid().ToString('N').Substring(0, 8))
+    [void](New-Item -ItemType Directory -Path $tmp -Force)
+    $zipPath = Join-Path $tmp 'GrindGuard-Windows.zip'
+    $sumPath = Join-Path $tmp 'SHA256SUMS.txt'
+    try {
+        Write-Output 'Lade herunter …'
+        Invoke-WebRequest -Uri $zip.browser_download_url -OutFile $zipPath -Headers @{ 'User-Agent' = 'GrindGuard' } -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
+        Invoke-WebRequest -Uri $sums.browser_download_url -OutFile $sumPath -Headers @{ 'User-Agent' = 'GrindGuard' } -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+    } catch {
+        Write-Output ('Download fehlgeschlagen: {0}' -f $_.Exception.Message)
+        Wait-Window $window
+        exit 1
+    }
+    $expected = ''
+    foreach ($l in [System.IO.File]::ReadAllLines($sumPath)) {
+        if ($l -match '^([0-9a-fA-F]{64})\s+\*?GrindGuard-Windows\.zip\s*$') { $expected = $Matches[1].ToLowerInvariant() }
+    }
+    $actual = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if (-not $expected -or $expected -ne $actual) {
+        Write-Output 'Die Prüfsumme stimmt nicht – das Update wird NICHT installiert.'
+        Wait-Window $window
+        exit 1
+    }
+    Write-Output 'Prüfsumme stimmt.'
+    $pkg = Join-Path $tmp 'paket'
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $pkg -Force
+    Get-ChildItem -LiteralPath $pkg -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
+    $inst = Join-Path $pkg 'app\install.ps1'
+    if (-not (Test-Path -LiteralPath $inst)) {
+        Write-Output 'Im Paket fehlt der Installer.'
+        Wait-Window $window
+        exit 1
+    }
+    Write-Output ''
+    & $script:PsExe -NoProfile -ExecutionPolicy Bypass -File $inst
+    Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    Wait-Window $window
 }
 
 function Get-Counts {
@@ -1701,12 +2106,7 @@ function Invoke-Pause([string]$Minutes) {
         $min = 120
         Write-Output 'Maximal 120 Minuten am Stück.'
     }
-    if (-not (Test-Path -LiteralPath $script:StateDir)) {
-        [void](New-Item -ItemType Directory -Path $script:StateDir -Force)
-    }
-    $end = (Get-Now) + $min * 60
-    [System.IO.File]::WriteAllText($script:PauseFile, [string]$end, $script:Utf8)
-    Write-Output ('Pause: {0} Minuten, bis {1} Uhr. Danach ist der Wächter automatisch wieder scharf.' -f $min, (Format-Clock $end))
+    Write-Output (Set-Pause $min)
 }
 
 function Invoke-Resume {
@@ -1714,12 +2114,11 @@ function Invoke-Resume {
     Write-Output 'Pause beendet. Der Wächter ist wieder scharf.'
 }
 
-function Invoke-Test {
+function Invoke-Test([string]$Plate) {
     Import-All
     Initialize-Speech
-    $quote = Get-Quote 1
     Write-Output 'Test: Gleich erscheint 6 Sekunden lang die Warnung …'
-    $mode = Show-Warning 6 'TESTALARM.' $quote 'So sieht es aus, wenn du erwischt wirst. Das hier ist nur ein Test.' 'Testalarm.'
+    $mode = Invoke-TestLock $Plate
     if ($mode -eq 'vollbild') {
         Write-Output 'Vollbild-Warnung: funktioniert.'
     } else {
@@ -1983,6 +2382,19 @@ function Invoke-Doctor {
         $ok = $false
     }
 
+    if (Initialize-Ui) {
+        Write-Output 'Oberfläche:          ok (Sperrbildschirm, Menü, Einstellungen)'
+    } else {
+        Write-Output ('Oberfläche:          FEHLER – {0}' -f $script:UiError)
+        Write-Output '                     (die Warnung erscheint dann nur als einfaches Dialogfenster)'
+        $ok = $false
+    }
+    if (Test-Path -Path $script:UninstallKey) {
+        Write-Output 'Unter Apps:          eingetragen (Deinstallieren über Einstellungen > Apps)'
+    } else {
+        Write-Output 'Unter Apps:          nicht eingetragen – INSTALLIEREN.cmd noch einmal starten'
+    }
+
     if (Initialize-Uia) {
         $found = $false
         foreach ($b in $script:Browsers) {
@@ -2052,12 +2464,13 @@ function Invoke-Doctor {
 function Show-Usage {
     Write-Output ('GrindGuard {0} – dein Fokus-Wächter (Windows)' -f $script:Version)
     Write-Output ''
+    Write-Output '  grind einstellungen Einstellungen öffnen (auch: Startmenü > GrindGuard)'
     Write-Output '  grind status        Läuft der Wächter? Wie viele Ausrutscher heute?'
     Write-Output '  grind fokus [Min]   Fokus-Sitzung (Standard 50): Listen eingefroren, keine Pause'
     Write-Output '  grind notausstieg   Fokus-Sitzung vorzeitig beenden (mit 10 Minuten Wartezeit)'
     Write-Output '  grind pause [Min]   Bewusste Pause (Standard 15, maximal 120 Minuten)'
     Write-Output '  grind weiter        Pause sofort beenden'
-    Write-Output '  grind test          Warnung einmal zur Probe anzeigen'
+    Write-Output '  grind test [Design]  Warnung zur Probe (nacht, kobalt, papier, lexikon, bordeaux)'
     Write-Output '  grind stats         Ausrutscher der letzten 7 Tage'
     Write-Output '  grind edit          Blocklisten, Sprüche und Einstellungen öffnen'
     Write-Output '  grind check ADRESSE Zeigt, ob eine Website oder Suche blockiert würde – und welche Regel'
@@ -2065,7 +2478,8 @@ function Show-Usage {
     Write-Output '  grind doctor        Prüfen, ob alles richtig eingerichtet ist'
     Write-Output '  grind start         Wächter starten (danach automatisch bei jeder Anmeldung)'
     Write-Output '  grind stop          Wächter anhalten (bis zur nächsten Anmeldung)'
-    Write-Output '  grind uninstall     Wächter entfernen'
+    Write-Output '  grind update        Neueste Version von GitHub holen und installieren'
+    Write-Output '  grind uninstall     Wächter entfernen (mit Fenster: grind deinstallieren)'
     Write-Output ''
     Write-Output 'Aufruf in PowerShell:  ~\GrindGuard\grind <Befehl>'
 }
@@ -2076,11 +2490,16 @@ switch ($Command.ToLowerInvariant()) {
     'start'     { Invoke-Start }
     'stop'      { Invoke-Stop }
     'uninstall' { Invoke-Uninstall }
+    'deinstallieren' { Invoke-UninstallGui }
+    'einstellungen' { Invoke-Settings $script:Arg }
+    'settings'  { Invoke-Settings $script:Arg }
+    'update'    { Invoke-Update $script:Arg }
+    '__einrichten' { Invoke-Register }
     'status'    { Invoke-Status }
     'pause'     { Invoke-Pause $script:Arg }
     'weiter'    { Invoke-Resume }
     'resume'    { Invoke-Resume }
-    'test'      { Invoke-Test }
+    'test'      { Invoke-Test $script:Arg }
     'stats'     { Invoke-Stats }
     'edit'      { Invoke-Edit }
     'check'     { Invoke-CheckUrl $script:Arg }

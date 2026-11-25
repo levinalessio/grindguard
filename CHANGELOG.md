@@ -2,7 +2,25 @@
 
 Format based on [Keep a Changelog](https://keepachangelog.com/). Releases are Git tags `v<version>`, e.g. `v1.3`.
 
-## [Unreleased]
+## [1.4] – unreleased
+
+### Added (Windows)
+- **Settings window** (Start menu → GrindGuard, or the tray icon). *Sperren:* every site, search term and program can be switched on or off on its own, whole sections at once, plus your own entries and any running program with one click. *Warnung:* tone, design of the lock screen with previews, lock times, alarm, voice, volume. *Zeiten:* active hours and days, return to work, hunt detection, force-quit. *Heute:* slips today and over the last 7 days, the most frequent distractions, focus session and pause buttons. Every change applies immediately; during a focus session the frozen rules stay in force.
+- **New lock screen in five designs**, in an editorial poster style with big type, grain and the countdown ring: *Nacht* (white and red on night blue), *Kobalt* (a line written nine times; one more line turns black as the time runs), *Papier* (your quote highlighted on a page made of your own quotes), *Lexikon* (a dictionary entry) and *Bordeaux* (calm, cream on oxblood). They alternate by tone or can be fixed with `DESIGN=`.
+- **The lock really locks:** while it is shown, the taskbar is pushed behind it and the Windows key (so also Win+R), Alt+Tab, Alt+Esc, Ctrl+Esc, Ctrl+Shift+Esc and the menu key do nothing. The keyboard hook exists only while the lock is shown. Ctrl+Alt+Del and Win+L keep working.
+- **Logo and tray icon** "G." in three states: black = active, red = focus session, grey = paused. New tray menu with a status line, focus session (extends a running one), pause, settings and a test lock; *Mehr* holds updates, folders, stop and uninstall. A left click opens it too, and it follows light and dark mode.
+- **Proper uninstall:** an entry under Windows Settings → Apps (per user, no admin rights), `DEINSTALLIEREN.cmd` and a dialog that can also delete lists and statistics. Not during a focus session.
+- **Updates on request:** *Nach Updates suchen* or `grind update` fetches the latest GitHub release, checks it against `SHA256SUMS.txt` and runs the installer. GrindGuard never checks on its own.
+- `grind einstellungen`, `grind test <design>`, `grind deinstallieren`.
+- CI compiles the interface with the plain .NET Framework compiler, runs `tests/windows/ui_test.cs` (list editing, settings, versions, every design at five screen sizes, the icon) and uploads lock-screen previews and an installable test package as artifacts.
+
+### Changed (Windows)
+- Headlines of the warning in sentence case with a full stop (“Schon wieder.” instead of “SCHON WIEDER.”).
+- The installer explains the tray icon, the Start menu entry and how to uninstall.
+
+### Fixed
+- Installing from the source-code ZIP (“Code → Download ZIP”) now says so and links to the release, instead of failing with a missing-file error (Windows and macOS).
+- Windows tray: the UAC shield icon is gone (it looked like an administrator prompt), and the menu shows the current state every time it opens.
 
 ## [1.3] – 2026-11-24
 

@@ -22,7 +22,7 @@ BINARY = ('.png', '.jpg', '.jpeg', '.gif', '.ico', '.icns', '.zip', '.svg')
 def rules(rel):
     """(Zeilenende, BOM nötig, nur ASCII) für eine Datei relativ zum Repo."""
     if rel.startswith('windows/'):
-        bom = rel.endswith('.ps1') or rel == 'windows/LIESMICH.txt'
+        bom = rel.endswith(('.ps1', '.cs')) or rel == 'windows/LIESMICH.txt'
         return 'crlf', bom, rel.endswith('.cmd')
     return 'lf', False, rel == 'macos/app/lib/overlay.js'
 

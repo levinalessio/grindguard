@@ -13,7 +13,9 @@ Found one that is missing? [Open a bypass report](../../../issues/new?template=b
 | `grind stop`, `pause`, `uninstall` | ⚙️ allowed. During a focus session: ✅ refused | same | Pause budget: pauses cost something and are counted |
 | Kill the process (Activity Monitor, `kill`, Task Manager) | 🟡 launchd restarts it after about 10 s | ❌ stays dead until next login | Watchdog service; during a commit session a privileged helper (opt-in) |
 | Remove the autostart (`launchctl bootout`, delete the plist / Run key) | ❌ | ❌ | Commit helper notices and restores it during a session |
-| Kill the lock-screen process | ❌ ends the lock early | ❌ ends the lock early (Task Manager can be on top) | Lock screen inside the native app, guarded by the watchdog |
+| Kill the lock-screen process | ❌ ends the lock early | 🟡 1.4: Ctrl+Shift+Esc is blocked during the lock, but Ctrl+Alt+Del → Task Manager still works | Lock screen inside the native app, guarded by the watchdog |
+| Windows key, Win+R, Start menu, Alt+Tab, taskbar during the lock | 🟡 the lock stays on top; switching apps behind it is not blocked | ✅ 1.4: blocked by a keyboard hook while the lock is shown, taskbar pushed behind the lock. Ctrl+Alt+Del and Win+L always work (by design of Windows) | same |
+| Touchpad gestures (task view, switch desktop) during the lock | 🟡 not tested | 🟡 the lock pulls itself back to the front every 0.4 s | same |
 | Change the system clock | ❌ ends pauses and focus sessions early | ❌ same | Monotonic time for running sessions |
 | Edit the lists during a focus session | ✅ frozen copy, edits apply afterwards | ✅ | same |
 | Second user account, guest account | ❌ installed per user | ❌ | Optional system-wide install |

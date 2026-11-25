@@ -165,20 +165,45 @@ jobs:
           $r | Format-Table RuleName, Line, Message -AutoSize | Out-String -Width 220 | Write-Host
           if ($r) { exit 1 }
 
-      - name: Compile and paint the countdown ring (C#)
+      - name: Interface (C#) – compile, test, render the lock screens
         run: |
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-          $tokens = $null; $errors = $null
-          $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path dist\windows\GrindGuard-Windows\app\grindguard.ps1), [ref]$tokens, [ref]$errors)
-          $assign = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$script:RingSource' }, $true) | Select-Object -First 1
-          Add-Type -TypeDefinition $assign.Right.Expression.Value -Language CSharp -ReferencedAssemblies System.Windows.Forms, System.Drawing
-          $ring = New-Object GGRing
-          $ring.SetBounds(0, 0, 180, 180)
-          $ring.Progress = 0.6
-          $ring.Text = '11'
-          $bmp = New-Object System.Drawing.Bitmap 180, 180
-          $ring.DrawToBitmap($bmp, (New-Object System.Drawing.Rectangle 0, 0, 180, 180))
-          Write-Host 'GGRing compiled and painted.'
+          $app = (Resolve-Path dist\windows\GrindGuard-Windows\app).Path
+          # 1. With the plain .NET Framework compiler: only the references Add-Type has, warnings visible
+          $csc = Join-Path ([Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()) 'csc.exe'
+          & $csc /nologo /noconfig /target:library /warn:4 /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /out:"$env:RUNNER_TEMP\ui.dll" "$app\grindguard-ui.cs"
+          if ($LASTEXITCODE) { exit 1 }
+          # 2. Exactly like grindguard.ps1 loads it, plus the tests
+          Add-Type -Path "$app\grindguard-ui.cs", (Resolve-Path tests\windows\ui_test.cs).Path -ReferencedAssemblies System.Windows.Forms, System.Drawing -IgnoreWarnings
+          $fails = [GGUiTests]::Run((Join-Path $env:RUNNER_TEMP 'uitest'), (Resolve-Path shared\config\websites.txt).Path,
+            (Resolve-Path windows\app\config\apps.txt).Path, (Resolve-Path windows\app\config\einstellungen.txt).Path,
+            (Resolve-Path shared\config\sprueche.txt).Path)
+          if ($fails) { exit 1 }
+          # 3. Previews with real Windows fonts (download them from the run's artifacts)
+          $out = Join-Path $env:RUNNER_TEMP 'vorschau'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $quotes = [string[]]@(Get-Content shared\config\sprueche.txt -Encoding UTF8 | Where-Object { $_.Trim() -and -not $_.StartsWith('#') })
+          foreach ($p in [GGPlates]::Names) {
+            $b = [GGPlates]::Render([GGPlates]::Sample($p, $quotes), 1920, 1080, 0.62, 9)
+            $b.Save((Join-Path $out ('sperre-{0}.png' -f $p)), [System.Drawing.Imaging.ImageFormat]::Png)
+            $b.Dispose()
+          }
+          [GGBrand]::SaveIco((Join-Path $out 'grindguard.ico'))
+          Get-ChildItem $out | Format-Table Name, Length -AutoSize | Out-String | Write-Host
+
+      - name: Upload the lock screen previews
+        uses: actions/upload-artifact@v7
+        with:
+          name: Sperrbildschirme
+          path: ${{ runner.temp }}/vorschau
+          retention-days: 14
+
+      - name: Upload a test package (install it before a release)
+        uses: actions/upload-artifact@v7
+        with:
+          name: GrindGuard-Windows-Test
+          path: dist/windows/GrindGuard-Windows
+          retention-days: 14
 
       - name: Corpus through the real PowerShell engine
         run: |

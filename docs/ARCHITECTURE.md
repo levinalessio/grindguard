@@ -59,7 +59,9 @@ The macOS engine is shell + `awk`. The Windows engine is PowerShell. `tests/wind
 
 **macOS:** `osascript -l JavaScript lib/overlay.js` with the texts in a temp file. The script creates one borderless `NSWindow` per screen at screen-saver level that joins all Spaces and full-screen apps. A small `NSView` subclass (`GGRingView`) draws the countdown ring. The pump loop runs every 50 ms. If the overlay cannot start, GrindGuard falls back to a dialog. Without a working lock screen there is no punishment, so the fallback matters.
 
-**Windows:** one borderless, top-most WinForms form per screen. `FormClosing` is cancelled until the time is up. The ring is a small C# control compiled at runtime with `Add-Type`. If that fails, a plain number label is shown. If no form can be shown at all, a `WScript.Shell` popup is the fallback.
+**Windows:** `windows/app/grindguard-ui.cs` (C# 5, .NET Framework 4, compiled at runtime with `Add-Type`) holds everything visual: the five lock-screen designs (`GGPlates`), the logo and tray icons (`GGBrand`), the tray menu renderer, the settings window and small dialogs. The lock is one borderless, top-most `GGLockWindow` per screen. The background is drawn once into a bitmap; each frame only repaints the countdown ring (and the Kobalt lines). `FormClosing` is cancelled until the time is up. While the lock is shown, `ITaskbarList2.MarkFullscreenWindow` pushes the taskbar behind it and a low-level keyboard hook (`GGLockGuard`) swallows the Windows key, Alt+Tab, Alt/Ctrl+Esc and Ctrl+Shift+Esc; the hook exists only for the duration of the lock and a key-up is only swallowed if its key-down was. If the interface cannot be compiled, a `WScript.Shell` popup is the fallback.
+
+**Windows settings window:** runs on its own STA thread inside the guard process, so the guard loop and the window never block each other. It edits the text files directly: toggling an entry adds or removes the leading `#`, everything else in the file (comments, order, CRLF, BOM) stays as it was, and files are replaced atomically. After a save it bumps `GGSettings.ConfigVersion`; the guard sees that within 50 ms and reloads. Actions that must run in PowerShell (test lock, focus session, pause) go through a small request queue (`GGSettings.TakeRequest`). Started without a running guard (`grind einstellungen`), the window runs in its own process and starts helper processes instead.
 
 Colors follow the tone: red for `brutal`, amber for `direkt`, blue for `ruhig`.
 
@@ -75,4 +77,4 @@ These are the reasons for the 2.0 proposal in [ROADMAP.md](ROADMAP.md):
 - **Reading URLs from outside:** AppleScript cannot read Firefox-based browsers on macOS, needs an Automation permission per browser and adds latency per call. UI Automation on Windows breaks whenever browsers change their UI.
 - **Two engines** have to be kept identical by tests instead of by construction.
 - **Scripts cannot be notarized,** and an unsigned script that closes windows and sends keystrokes looks suspicious to antivirus heuristics and Smart App Control.
-- **No real UI:** settings live in text files, and status is a CLI command (on Windows also a tray icon).
+- **Little UI on macOS:** settings live in text files and status is a CLI command. Windows has a tray menu and a settings window since 1.4.

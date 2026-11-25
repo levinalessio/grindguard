@@ -27,6 +27,10 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $src 'grindguard.ps1'))) {
         throw 'Die Installationsdateien fehlen. Bitte das ZIP vollständig entpacken und es noch einmal versuchen.'
     }
+    if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $src 'config') 'websites.txt'))) {
+        throw ('Das ist der Quellcode von GitHub ("Code > Download ZIP"), nicht das fertige Paket.' +
+            [Environment]::NewLine + 'Lade GrindGuard-Windows.zip hier herunter: https://github.com/levinalessio/grindguard/releases/latest')
+    }
     $newVersion = Get-ScriptVersion (Join-Path $src 'grindguard.ps1')
     $oldVersion = Get-ScriptVersion (Join-Path $dest 'grindguard.ps1')
     $update = ($oldVersion -ne '')
@@ -40,9 +44,11 @@ try {
         if (-not (Test-Path -LiteralPath $d)) { [void](New-Item -ItemType Directory -Path $d) }
     }
     # Erst daneben kopieren, dann austauschen: Ein laufender Wächter liest nie eine halb kopierte Datei.
-    foreach ($n in @('grindguard.ps1', 'grind.cmd')) {
+    foreach ($n in @('grindguard.ps1', 'grind.cmd', 'grindguard-ui.cs', 'DEINSTALLIEREN.cmd')) {
+        $from = Join-Path $src $n
+        if (-not (Test-Path -LiteralPath $from)) { continue }
         $tmp = Join-Path $dest ($n + '.neu')
-        Copy-Item -LiteralPath (Join-Path $src $n) -Destination $tmp -Force
+        Copy-Item -LiteralPath $from -Destination $tmp -Force
         Move-Item -LiteralPath $tmp -Destination (Join-Path $dest $n) -Force
     }
     $readme = Join-Path $pkg 'LIESMICH.txt'
@@ -129,6 +135,10 @@ try {
 $ErrorActionPreference = 'Continue'
 $grind = Join-Path $dest 'grindguard.ps1'
 
+# Eintrag unter "Einstellungen > Apps", Startmenü "GrindGuard", Symbol
+Write-Host ''
+& $psExe -NoProfile -ExecutionPolicy Bypass -File $grind __einrichten
+
 Write-Host ''
 & $psExe -NoProfile -ExecutionPolicy Bypass -File $grind start
 $started = ($LASTEXITCODE -eq 0)
@@ -147,16 +157,14 @@ if (-not $started) {
     Write-Host ('Update fertig. GrindGuard {0} läuft schon mit den neuen Listen.' -f $newVersion)
 } else {
     Write-Host 'Fertig. GrindGuard läuft im Hintergrund und startet bei jeder Anmeldung mit.'
-    Write-Host 'Das Schild-Symbol unten rechts in der Taskleiste zeigt: Er ist aktiv.'
+    Write-Host 'Das G.-Symbol unten rechts in der Taskleiste zeigt: Er ist aktiv.'
     Write-Host '(Falls du es nicht siehst: Pfeil ^ neben der Uhr anklicken.)'
 }
 Write-Host ''
-Write-Host 'Befehle – in PowerShell eingeben (Windows-Taste, "PowerShell", Enter):'
-Write-Host '  ~\GrindGuard\grind status     Läuft er? Wie viele Ausrutscher heute?'
-Write-Host '  ~\GrindGuard\grind fokus 50   Fokus-Sitzung: 50 Minuten ohne Ausweg'
-Write-Host '  ~\GrindGuard\grind pause 20   Bewusste Pause, hier 20 Minuten'
-Write-Host '  ~\GrindGuard\grind edit       Listen bearbeiten'
-Write-Host '  ~\GrindGuard\grind doctor     Prüfen, ob alles richtig eingerichtet ist'
-Write-Host '  ~\GrindGuard\grind help       Alle Befehle'
+Write-Host 'So bedienst du GrindGuard:'
+Write-Host '  Klick aufs G.-Symbol        Fokus-Sitzung, Pause, Einstellungen'
+Write-Host '  Startmenü > GrindGuard      Einstellungen: was gesperrt wird, Design, Zeiten'
+Write-Host '  Einstellungen > Apps        GrindGuard entfernen (oder DEINSTALLIEREN.cmd)'
 Write-Host ''
+Write-Host 'Für Fortgeschrittene, in PowerShell:  ~\GrindGuard\grind help'
 Write-Host ('Anleitung: {0}' -f (Join-Path $dest 'LIESMICH.txt'))

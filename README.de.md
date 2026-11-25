@@ -47,8 +47,14 @@ xattr -d com.apple.quarantine ~/Library/LaunchAgents/com.grindguard.agent.plist
 
 1. `GrindGuard-Windows.zip` unter [Releases](../../releases) herunterladen, Rechtsklick → **Alle extrahieren**.
 2. Doppelklick auf `INSTALLIEREN.cmd`. Windows warnt, weil die Datei aus dem Internet kommt und (noch) nicht signiert ist: **Weitere Informationen → Trotzdem ausführen**.
-3. Es erscheint 6 Sekunden lang eine Test-Warnung. Das Schild-Symbol in der Taskleiste zeigt, dass der Wächter läuft. Per Rechtsklick erreichst du Status, Listen und Fokus-Sitzungen.
+3. Es erscheint 6 Sekunden lang eine Test-Warnung. Das **G.**-Symbol in der Taskleiste zeigt, dass der Wächter läuft (schwarz = aktiv, rot = Fokus-Sitzung, grau = Pause). Ein Klick darauf: Fokus-Sitzung, Pause, Einstellungen.
 4. Kontrolle in PowerShell: `~\GrindGuard\grind doctor`
+
+**Einstellungen** (Startmenü → GrindGuard, oder Klick aufs Symbol): jede Website, jede Suche und jedes Programm einzeln an und aus, eigene Einträge, laufende Programme mit einem Klick sperren, Ton und Design der Sperre, Sperrzeiten, aktive Zeiten, Statistik. Jede Änderung wirkt sofort.
+
+**Aktualisieren:** Einstellungen → Über → *Nach Updates suchen*. GrindGuard holt die neue Version von GitHub, prüft die Prüfsumme und startet den Installer. Von selbst prüft er nie.
+
+**Entfernen:** wie jedes Programm unter Windows-Einstellungen → Apps, mit `DEINSTALLIEREN.cmd` im GrindGuard-Ordner oder im Menü unter *Mehr*. Während einer Fokus-Sitzung nicht.
 
 **Browser unter Windows:** Chrome, Edge, Brave, Opera, Vivaldi, Chromium, Thorium, Arc, Comet, Firefox, LibreWolf, Waterfox, Floorp und Zen. Die Adresse liest GrindGuard über die Bedienungshilfen von Windows (UI Automation). Klappt das nicht, etwa im Vollbild, erkennt er die Seite am Fenstertitel.
 
@@ -70,7 +76,9 @@ Auf dem iPhone lässt Apple kein Programm andere Apps überwachen. Die Anleitung
 | `grind check <adresse>` | Gesperrt? Und welche Zeile deiner Liste ist schuld? |
 | `grind stats` | Ausrutscher der letzten 7 Tage |
 | `grind edit` | Listen, Sprüche und Einstellungen öffnen |
-| `grind test` | Warnung zur Probe |
+| `grind test [design]` | Warnung zur Probe (Windows: `nacht`, `kobalt`, `papier`, `lexikon`, `bordeaux`) |
+| `grind einstellungen` | Windows: Einstellungen öffnen |
+| `grind update` | Windows: neueste Version von GitHub holen und installieren |
 | `grind doctor` | Rechte, Autostart, Browser und Alarmton prüfen |
 | `grind stop` / `grind uninstall` | Anhalten bis zur nächsten Anmeldung / entfernen. Nicht während einer Fokus-Sitzung. |
 
